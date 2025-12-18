@@ -84,13 +84,8 @@
         // --- Firebase Configuration & Initialization ---
         // ใช้ค่า Config ที่คุณส่งมาให้จาก Firebase Console
         const myCustomFirebaseConfig = {
-            apiKey: "AIzaSyBjtmoUOqyYqsQmlOJUOHymbcHPsA5Omwk",
-            authDomain: "focolab-3d.firebaseapp.com",
-            projectId: "focolab-3d",
-            storageBucket: "focolab-3d.firebasestorage.app",
-            messagingSenderId: "107499921832",
-            appId: "1:107499921832:web:2e818c5901f5fa51d2fd9d",
-            measurementId: "G-C1ECGWM4ST"
+            env:
+                secret_key:
         };
 
         let auth;
@@ -942,3 +937,4 @@
     </script>
 </body>
 </html>
+
