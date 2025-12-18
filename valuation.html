@@ -7,6 +7,7 @@
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="D:\VS Code\focolab\js\valuation.js" onerror="console.warn('valuation.js not found, skipping')"></script>
     
     <!-- Import Map for React & Three.js modules -->
     <script type="importmap">
@@ -35,8 +36,8 @@
         ::-webkit-scrollbar-thumb:hover { background: #444; }
         
         .modal-overlay {
-            background-color: rgba(0, 0, 0, 0.8);
-            backdrop-filter: blur(4px);
+            background-color: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(8px);
         }
 
         input[type=number]::-webkit-outer-spin-button,
@@ -48,16 +49,16 @@
             -moz-appearance: textfield;
         }
         
-        .custom-checkbox {
-            cursor: pointer;
-        }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: scale(0.95); }
             to { opacity: 1; transform: scale(1); }
         }
         .animate-fadeIn {
-            animation: fadeIn 0.2s ease-out forwards;
+            animation: fadeIn 0.25s ease-out forwards;
         }
     </style>
 </head>
@@ -74,32 +75,8 @@
         import * as THREE from 'three';
         import { 
           Upload, Trash2, Layers, Settings, 
-          Scale, Calculator, Clock, X, CheckCircle, Ruler, Lock, Unlock, Palette, Image as ImageIcon, AlertTriangle, CheckSquare, Square, LogIn, User, LogOut, Loader2 
+          Scale, Calculator, Clock, X, CheckCircle, Ruler, Lock, Unlock, Palette, Image as ImageIcon, AlertTriangle, CheckSquare, Square, Loader2, User, MapPin, Phone, CreditCard, ArrowRight, ArrowLeft 
         } from 'lucide-react';
-        
-        // --- Firebase Imports ---
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, updateProfile } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
-
-        // --- Firebase Configuration & Initialization ---
-        // ใช้ค่า Config ที่คุณส่งมาให้จาก Firebase Console
-        const myCustomFirebaseConfig = {
-            env:
-                secret_key:
-        };
-
-        let auth;
-        try {
-            // ดึงค่า config จาก environment หากมี ถ้าไม่มีให้ใช้ค่าที่เราตั้งไว้
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : myCustomFirebaseConfig;
-            
-            if (firebaseConfig && firebaseConfig.apiKey) {
-                const app = initializeApp(firebaseConfig);
-                auth = getAuth(app);
-            }
-        } catch (e) {
-            console.error("Firebase Initialization Error:", e);
-        }
 
         // --- Constants & Config ---
         const MATERIAL_COST_PER_GRAM = 1.5; 
@@ -107,6 +84,9 @@
         const FIXED_COST_POST = 50;
         const HOURLY_RATE = 4;
         const MAX_BUILD_VOLUME = 235; 
+
+        // Placeholder for Google Script URL
+        const GOOGLE_SCRIPT_URL = "YOUR_GOOGLE_SCRIPT_WEB_APP_URL_HERE"; 
 
         const MATERIALS = {
           PLA: { name: 'PLA', density: 1.24 },
@@ -117,7 +97,7 @@
 
         const COLORS = [
             { id: 'white', name: 'ขาว (White)', hex: '#FFFFFF' },
-            { id: 'black', name: 'ดำ (Black)', hex: '#333333' },
+            { id: 'black', name: 'ดำ (Black)', hex: '#222222' },
             { id: 'grey', name: 'เทา (Grey)', hex: '#808080' },
             { id: 'red', name: 'แดง (Red)', hex: '#EF4444' },
             { id: 'other', name: 'อื่นๆ (ระบุ)', hex: '#3B82F6' }
@@ -134,8 +114,6 @@
         const getVolume = (geometry) => {
           if (!geometry || !geometry.isBufferGeometry) return 0;
           let position = geometry.attributes.position;
-          if (!position) return 0;
-          
           let faces = position.count / 3;
           let sum = 0;
           let p1 = new THREE.Vector3(), p2 = new THREE.Vector3(), p3 = new THREE.Vector3();
@@ -160,84 +138,58 @@
         const SmartInput = ({ value, onChange, className, step = "0.1" }) => {
             const [localValue, setLocalValue] = useState(value);
             const [isEditing, setIsEditing] = useState(false);
-
-            useEffect(() => {
-                if (!isEditing) {
-                    setLocalValue(Number(value).toFixed(step.includes('.') ? 2 : 0));
-                }
-            }, [value, isEditing, step]);
-
-            const handleChange = (e) => {
-                const newValue = e.target.value;
-                setLocalValue(newValue);
-                if (newValue === '' || newValue === '-') return; 
-                const parsed = parseFloat(newValue);
-                if (!isNaN(parsed)) onChange(parsed);
-            };
-
-            const handleBlur = () => {
-                setIsEditing(false);
-                let finalVal = parseFloat(localValue);
-                if (isNaN(finalVal)) finalVal = 0;
-                setLocalValue(finalVal.toFixed(step.includes('.') ? 2 : 0));
-                onChange(finalVal);
-            };
-
+            useEffect(() => { if (!isEditing) setLocalValue(Number(value).toFixed(step.includes('.') ? 2 : 0)); }, [value, isEditing]);
             return (
-                <input 
-                    type="number" 
-                    step={step}
-                    value={localValue}
-                    onChange={handleChange}
-                    onFocus={() => setIsEditing(true)}
-                    onBlur={handleBlur}
-                    className={className}
-                />
+                <input type="number" step={step} value={localValue} 
+                    onChange={(e) => { setLocalValue(e.target.value); const v = parseFloat(e.target.value); if(!isNaN(v)) onChange(v); }}
+                    onFocus={() => setIsEditing(true)} 
+                    onBlur={() => { setIsEditing(false); onChange(parseFloat(localValue) || 0); }}
+                    className={className} />
             );
         };
 
         const ScreenshotTaker = ({ onCaptured }) => {
-            const { gl, scene, camera } = useThree();
+            const { gl } = useThree();
             useEffect(() => {
                 const timer = setTimeout(() => {
-                    try {
-                        const dataUrl = gl.domElement.toDataURL('image/png', 0.5);
-                        onCaptured(dataUrl);
-                    } catch (e) { console.error("Screenshot failed", e); }
-                }, 800); 
+                    const dataUrl = gl.domElement.toDataURL('image/png', 0.5);
+                    onCaptured(dataUrl);
+                }, 800);
                 return () => clearTimeout(timer);
-            }, [gl, scene, camera, onCaptured]);
+            }, [gl]);
             return null;
         };
 
+        // --- 3D Scene Helpers (Axes & Grid) ---
+        const SceneHelpers = () => {
+            return (
+                <group position={[0, -0.05, 0]}>
+                    <gridHelper args={[300, 30, 0x555555, 0x222222]} />
+                    <axesHelper args={[100]} />
+                </group>
+            );
+        };
+
         const ModelViewer = ({ fileUrl, fileType, scale, colorHex, onModelLoaded }) => {
-          const Loader = fileType === 'obj' ? OBJLoader : STLLoader;
-          const object = useLoader(Loader, fileUrl);
-
-          const meshGeometry = useMemo(() => {
-            if (fileType === 'obj') {
-              let foundGeo = null;
-              object.traverse((child) => {
-                if (child.isMesh && !foundGeo) foundGeo = child.geometry;
-              });
-              return foundGeo;
-            }
-            return object;
-          }, [object, fileType]);
-
-          useEffect(() => {
-              if (onModelLoaded) onModelLoaded();
-          }, [meshGeometry, onModelLoaded]);
-
-          if (!meshGeometry) return null;
-
-          return (
-            <Center>
-              <mesh geometry={meshGeometry} scale={[scale.x, scale.y, scale.z]} castShadow receiveShadow>
-                <meshStandardMaterial color={colorHex} roughness={0.5} metalness={0.1} />
-              </mesh>
-            </Center>
-          );
+            const Loader = fileType === 'obj' ? OBJLoader : STLLoader;
+            const object = useLoader(Loader, fileUrl);
+            const meshGeometry = useMemo(() => {
+                if (fileType === 'obj') {
+                    let foundGeo = null;
+                    object.traverse((child) => { if (child.isMesh && !foundGeo) foundGeo = child.geometry; });
+                    return foundGeo;
+                }
+                return object;
+            }, [object, fileType]);
+            useEffect(() => { if (onModelLoaded) onModelLoaded(); }, [meshGeometry]);
+            if (!meshGeometry) return null;
+            return (
+                <Center top>
+                    <mesh geometry={meshGeometry} scale={[scale.x, scale.y, scale.z]} castShadow receiveShadow>
+                        <meshStandardMaterial color={colorHex} roughness={0.5} metalness={0.1} />
+                    </mesh>
+                </Center>
+            );
         };
 
         const LoaderFallback = () => {
@@ -255,175 +207,109 @@
         const ModelAnalyzer = ({ fileUrl, fileType, id, onAnalyzed }) => {
             const Loader = fileType === 'obj' ? OBJLoader : STLLoader;
             const result = useLoader(Loader, fileUrl);
-            
             useEffect(() => {
-              let vol = 0;
-              const box = new THREE.Box3();
-              if (fileType === 'obj') {
-                result.traverse(child => {
-                  if (child.isMesh) vol += getVolume(child.geometry);
-                });
-                box.setFromObject(result);
-              } else {
-                vol = getVolume(result);
-                result.computeBoundingBox();
-                box.copy(result.boundingBox);
-              }
-              const size = new THREE.Vector3();
-              box.getSize(size);
-              onAnalyzed(id, { volume: vol, originalSize: { x: size.x, y: size.y, z: size.z } });
-            }, [result, fileUrl, id, fileType, onAnalyzed]);
+                let vol = 0;
+                const box = new THREE.Box3();
+                if (fileType === 'obj') {
+                    result.traverse(child => { if (child.isMesh) vol += getVolume(child.geometry); });
+                    box.setFromObject(result);
+                } else {
+                    vol = getVolume(result);
+                    result.computeBoundingBox();
+                    box.copy(result.boundingBox);
+                }
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                onAnalyzed(id, { volume: vol, originalSize: { x: size.x, y: size.y, z: size.z } });
+            }, [result, id]);
             return null;
         };
 
-        // --- Auth Modal ---
-        const AuthModal = ({ onClose, onSuccess }) => {
-            const [mode, setMode] = useState('login'); 
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
-            const [error, setError] = useState('');
-            const [loading, setLoading] = useState(false);
+        // --- Mock Google Sheets API ---
+        const sendToGoogleSheets = async (data) => {
+            console.log("Sending data to Google Sheets:", data);
+            return new Promise(resolve => setTimeout(resolve, 1500));
+        };
 
-            const handleSubmit = async (e) => {
+        // --- Checkout Modal Wizard ---
+        const CheckoutWizard = ({ onClose, selectedItems, totalStats }) => {
+            const [step, setStep] = useState(1); 
+            const [formData, setFormData] = useState({ name: '', address: '', phone: '' });
+            const [slipFile, setSlipFile] = useState(null);
+            const [isSubmitting, setIsSubmitting] = useState(false);
+
+            const handleFormSubmit = async (e) => {
                 e.preventDefault();
-                setError('');
-                setLoading(true);
-                
-                if (!auth) {
-                    setError("ยังไม่ได้ตั้งค่า Firebase Configuration");
-                    setLoading(false);
-                    return;
-                }
-
-                try {
-                    if (mode === 'login') {
-                        await signInWithEmailAndPassword(auth, email, password);
-                    } else {
-                        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                        try {
-                            await updateProfile(userCredential.user, { displayName: email.split('@')[0] });
-                        } catch(err) { /* ignore */ }
-                    }
-                    onSuccess(); 
-                } catch (err) {
-                    console.error("Auth Error:", err);
-                    if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-                        setError('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
-                    } else if (err.code === 'auth/email-already-in-use') {
-                        setError('อีเมลนี้ถูกใช้งานแล้ว');
-                    } else if (err.code === 'auth/weak-password') {
-                        setError('รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร');
-                    } else {
-                        setError('เกิดข้อผิดพลาด กรุณาลองใหม่');
-                    }
-                } finally {
-                    setLoading(false);
-                }
+                setIsSubmitting(true);
+                await sendToGoogleSheets({ type: 'ORDER', ...formData, items: selectedItems.map(i => i.name), totalPrice: Math.ceil(totalStats.price) });
+                setIsSubmitting(false);
+                setStep(3);
             };
 
-            const handleGoogleLogin = async () => {
-                if (!auth) {
-                    setError("กรุณาตั้งค่า Firebase ก่อน");
-                    return;
-                }
-                setError('');
-                setLoading(true);
-                try {
-                    const provider = new GoogleAuthProvider();
-                    await signInWithPopup(auth, provider);
-                    onSuccess();
-                } catch (err) {
-                    console.error("Google Auth Error:", err);
-                    setError('เข้าสู่ระบบด้วย Google ล้มเหลว');
-                } finally {
-                    setLoading(false);
-                }
+            const handlePaymentSubmit = async () => {
+                if(!slipFile) return alert("กรุณาอัปโหลดสลิปโอนเงิน");
+                setIsSubmitting(true);
+                await sendToGoogleSheets({ type: 'PAYMENT', customer: formData.name, slipName: slipFile.name, amount: Math.ceil(totalStats.price) });
+                setIsSubmitting(false);
+                setStep(4);
             };
 
             return (
-                <div className="absolute inset-0 z-[100] flex items-center justify-center modal-overlay p-4">
-                    <div className="bg-[#1e1e1e] w-full max-w-sm rounded-2xl border border-gray-700 shadow-2xl overflow-hidden animate-fadeIn relative text-gray-200">
-                        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors">
-                            <X size={20} />
-                        </button>
-                        
-                        <div className="p-8">
-                            <div className="text-center mb-6">
-                                <h2 className="text-2xl font-bold text-white mb-2">{mode === 'login' ? 'ยินดีต้อนรับกลับ' : 'สร้างบัญชีใหม่'}</h2>
-                                <p className="text-gray-400 text-sm">เข้าสู่ระบบเพื่อจัดการไฟล์งานของคุณ</p>
-                            </div>
+                <div className="absolute inset-0 z-[150] flex items-center justify-center modal-overlay p-4 animate-fadeIn text-gray-200">
+                    <div className="bg-[#1e1e1e] w-full max-w-md rounded-[32px] border border-gray-800 shadow-2xl overflow-hidden relative flex flex-col max-h-[90vh]">
+                        <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-[#252525]">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                {step === 1 && <><CheckCircle size={20} className="text-blue-500"/> สรุปรายการ</>}
+                                {step === 2 && <><User size={20} className="text-blue-500"/> ข้อมูลจัดส่ง</>}
+                                {step === 3 && <><CreditCard size={20} className="text-blue-500"/> ชำระเงิน</>}
+                                {step === 4 && <><CheckCircle size={20} className="text-green-500"/> เสร็จสิ้น</>}
+                            </h3>
+                            {step < 4 && <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><X size={22} /></button>}
+                        </div>
 
-                            {error && (
-                                <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded-lg text-red-200 text-xs text-center flex items-center justify-center gap-2">
-                                    <AlertTriangle size={14} /> {error}
+                        <div className="p-6 overflow-y-auto custom-scrollbar">
+                            {step === 1 && (
+                                <div className="space-y-6">
+                                    <div className="bg-[#1a1a1a] rounded-2xl p-5 space-y-3 border border-gray-800">
+                                        <div className="flex justify-between text-sm text-gray-400"><span>ไฟล์ที่เลือก:</span><span className="font-bold text-white">{selectedItems.length} รายการ</span></div>
+                                        <div className="flex justify-between text-sm text-gray-400"><span>น้ำหนักรวม:</span><span className="font-bold text-white">{totalStats.weight.toFixed(1)} กรัม</span></div>
+                                        <div className="flex justify-between text-sm text-gray-400"><span>เวลาพิมพ์รวม:</span><span className="font-bold text-white">{formatTime(totalStats.time)}</span></div>
+                                    </div>
+                                    <div className="flex justify-between items-center pt-2 px-2">
+                                        <span className="text-gray-500 font-bold uppercase tracking-widest text-xs">ยอดชำระสุทธิ</span>
+                                        <span className="text-4xl font-black text-blue-500">฿{Math.ceil(totalStats.price)}</span>
+                                    </div>
+                                    <button onClick={() => setStep(2)} className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 active:scale-95">
+                                        ดำเนินการต่อ <ArrowRight size={18} />
+                                    </button>
                                 </div>
                             )}
 
-                            <div className="space-y-4">
-                                <button 
-                                    onClick={handleGoogleLogin}
-                                    disabled={loading}
-                                    className="w-full py-2.5 bg-white text-gray-800 font-semibold rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-2 disabled:opacity-70"
-                                >
-                                    {loading ? <Loader2 size={18} className="animate-spin text-blue-600" /> : (
-                                        <svg className="w-5 h-5" viewBox="0 0 24 24">
-                                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                                        </svg>
-                                    )}
-                                    ดำเนินการต่อด้วย Google
-                                </button>
-
-                                <div className="relative flex py-2 items-center">
-                                    <div className="flex-grow border-t border-gray-700"></div>
-                                    <span className="flex-shrink-0 mx-4 text-gray-500 text-xs font-medium">หรือกรอกเอง</span>
-                                    <div className="flex-grow border-t border-gray-700"></div>
-                                </div>
-
-                                <form onSubmit={handleSubmit} className="space-y-3">
-                                    <div>
-                                        <label className="block text-xs text-gray-400 mb-1">อีเมล</label>
-                                        <input 
-                                            type="email" 
-                                            required
-                                            value={email}
-                                            onChange={(e) => setEmail(e.target.value)}
-                                            className="w-full bg-[#252525] border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
-                                            placeholder="name@example.com"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs text-gray-400 mb-1">รหัสผ่าน</label>
-                                        <input 
-                                            type="password" 
-                                            required
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            className="w-full bg-[#252525] border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
-                                            placeholder="••••••••"
-                                        />
-                                    </div>
-                                    <button 
-                                        type="submit" 
-                                        disabled={loading}
-                                        className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center disabled:opacity-70"
-                                    >
-                                        {loading ? <Loader2 size={18} className="animate-spin" /> : (mode === 'login' ? 'เข้าสู่ระบบ' : 'สมัครสมาชิก')}
-                                    </button>
+                            {step === 2 && (
+                                <form onSubmit={handleFormSubmit} className="space-y-4">
+                                    <div><label className="text-xs text-gray-400 mb-1 block flex items-center gap-1"><User size={12}/> ชื่อ-นามสกุล</label><input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-[#111] border border-gray-700 rounded-xl p-3 text-sm focus:border-blue-500 outline-none" placeholder="กรอกชื่อผู้รับ" /></div>
+                                    <div><label className="text-xs text-gray-400 mb-1 block flex items-center gap-1"><MapPin size={12}/> ที่อยู่จัดส่ง</label><textarea required rows="3" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full bg-[#111] border border-gray-700 rounded-xl p-3 text-sm focus:border-blue-500 outline-none resize-none" placeholder="บ้านเลขที่, ถนน, แขวง/ตำบล, เขต/อำเภอ, จังหวัด, รหัสไปรษณีย์"></textarea></div>
+                                    <div><label className="text-xs text-gray-400 mb-1 block flex items-center gap-1"><Phone size={12}/> เบอร์โทรศัพท์</label><input required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-[#111] border border-gray-700 rounded-xl p-3 text-sm focus:border-blue-500 outline-none" placeholder="08x-xxx-xxxx" /></div>
+                                    <div className="pt-4 flex gap-3"><button type="button" onClick={() => setStep(1)} className="px-4 py-3 bg-gray-800 text-gray-400 rounded-xl hover:bg-gray-700"><ArrowLeft size={18}/></button><button type="submit" disabled={isSubmitting} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl flex items-center justify-center gap-2">{isSubmitting ? <Loader2 className="animate-spin"/> : 'ยืนยันข้อมูล'}</button></div>
                                 </form>
-                            </div>
+                            )}
 
-                            <div className="mt-6 text-center text-xs text-gray-400">
-                                {mode === 'login' ? 'ยังไม่มีบัญชีใช่ไหม? ' : 'มีบัญชีอยู่แล้ว? '}
-                                <button 
-                                    onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}
-                                    className="text-blue-400 hover:underline"
-                                >
-                                    {mode === 'login' ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ'}
-                                </button>
-                            </div>
+                            {step === 3 && (
+                                <div className="space-y-6 text-center">
+                                    <div className="bg-white p-4 rounded-2xl inline-block mx-auto shadow-inner"><img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=PromptPay-0123456789" alt="Payment QR" className="w-40 h-40 mix-blend-multiply" /></div>
+                                    <div className="text-sm text-gray-300"><p className="font-bold text-white mb-1">ธนาคารกสิกรไทย</p><p>เลขบัญชี: <span className="font-mono text-blue-400 text-lg">XXX-X-XXXXX-X</span></p><p>ชื่อบัญชี: บจก. โฟโคแล็บ</p><p className="mt-2 text-xs text-gray-500">ยอดชำระ: ฿{Math.ceil(totalStats.price)}</p></div>
+                                    <div className="border-t border-gray-800 pt-4"><label className="w-full flex flex-col items-center px-4 py-4 bg-[#1a1a1a] text-blue rounded-xl shadow-lg tracking-wide uppercase border border-blue-500/30 cursor-pointer hover:bg-[#222] hover:border-blue-500 transition-all group"><Upload size={24} className="text-blue-500 group-hover:scale-110 transition-transform"/><span className="mt-2 text-xs font-bold text-gray-400 group-hover:text-white">{slipFile ? slipFile.name : 'แตะเพื่ออัปโหลดสลิป'}</span><input type='file' className="hidden" accept="image/*" onChange={(e) => setSlipFile(e.target.files[0])} /></label></div>
+                                    <div className="flex gap-3"><button onClick={() => setStep(2)} className="px-4 py-3 bg-gray-800 text-gray-400 rounded-xl hover:bg-gray-700"><ArrowLeft size={18}/></button><button onClick={handlePaymentSubmit} disabled={isSubmitting} className="flex-1 py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl flex items-center justify-center gap-2">{isSubmitting ? <Loader2 className="animate-spin"/> : 'แจ้งชำระเงิน'}</button></div>
+                                </div>
+                            )}
+
+                            {step === 4 && (
+                                <div className="text-center py-8 space-y-6">
+                                    <div className="w-24 h-24 bg-green-500/10 rounded-full flex items-center justify-center mx-auto animate-bounce"><CheckCircle size={48} className="text-green-500" /></div>
+                                    <div><h2 className="text-2xl font-black text-white mb-2">ขอบคุณที่ใช้บริการ!</h2><p className="text-gray-400 text-sm">เราได้รับข้อมูลการสั่งซื้อและหลักฐานการโอนเงินเรียบร้อยแล้ว</p><p className="text-gray-500 text-xs mt-2">ทีมงานจะตรวจสอบและติดต่อกลับเพื่อยืนยันคิวการพิมพ์โดยเร็วที่สุด</p></div>
+                                    <button onClick={onClose} className="w-full py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold rounded-2xl transition-all">ปิดหน้าต่าง</button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -437,83 +323,36 @@
           const [modelStats, setModelStats] = useState({}); 
           const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
           const [isCalculated, setIsCalculated] = useState(false);
-          
-          // Auth State
-          const [user, setUser] = useState(null);
-          const [showAuthModal, setShowAuthModal] = useState(false);
-          const [authLoading, setAuthLoading] = useState(true);
 
-          useEffect(() => {
-              if (!auth) {
-                  setAuthLoading(false);
-                  return;
-              }
-              const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-                  setUser(currentUser ? {
-                      name: currentUser.displayName || currentUser.email.split('@')[0],
-                      email: currentUser.email,
-                      photoURL: currentUser.photoURL
-                  } : null);
-                  setAuthLoading(false);
-              });
-              return () => unsubscribe();
-          }, []);
-
-          const defaultSettings = {
-            scale: { x: 1, y: 1, z: 1 },
-            uniformScale: true,
-            material: 'PLA',
-            colorId: 'white',
-            customColor: '',
-            infill: 20,
-            layerHeight: 0.20,
-            supportEnabled: true,
-            supportDensity: 15,
-          };
+          const defaultSettings = { scale: { x: 1, y: 1, z: 1 }, uniformScale: true, material: 'PLA', colorId: 'white', customColor: '', infill: 20, layerHeight: 0.20, supportEnabled: true, supportDensity: 15 };
 
           const handleUploadClick = () => {
-              if (!user) {
-                  setShowAuthModal(true);
-              } else {
-                  document.getElementById('file-upload-input').click();
-              }
+              document.getElementById('file-upload-input').click();
           };
 
-          const handleFileUpload = (e) => {
-            if (!user) return; 
+          const handleUpload = (e) => {
             const files = Array.from(e.target.files);
-            files.forEach(file => {
-              const extension = file.name.split('.').pop().toLowerCase();
-              if (extension !== 'stl' && extension !== 'obj') {
-                alert("รองรับเฉพาะไฟล์ .stl และ .obj เท่านั้น");
-                return;
-              }
-              const url = URL.createObjectURL(file);
-              const newModel = {
+            if (files.length === 0) return;
+
+            const newModels = files.map(file => ({
                 id: Date.now() + Math.random(),
                 name: file.name,
-                file: file,
-                url: url,
-                type: extension,
-                thumbnail: null, 
+                url: URL.createObjectURL(file),
+                type: file.name.split('.').pop().toLowerCase(),
+                thumbnail: null,
                 isSelected: true,
                 settings: { ...defaultSettings }
-              };
-              setModels(prev => [...prev, newModel]);
-              if (!selectedId) setSelectedId(newModel.id);
-              setIsCalculated(false);
-            });
-            e.target.value = null;
-          };
+            }));
 
-          const handleLogout = async () => {
-              if(confirm('คุณต้องการออกจากระบบใช่หรือไม่?')) {
-                  try {
-                    if (auth) await signOut(auth);
-                    setModels([]); 
-                    setSelectedId(null);
-                  } catch (err) { console.error("Sign out error:", err); }
-              }
+            setModels(prev => [...prev, ...newModels]);
+            
+            // Fix: Select the first uploaded model if nothing was selected
+            if (!selectedId && newModels.length > 0) {
+                setSelectedId(newModels[0].id);
+            }
+            
+            setIsCalculated(false);
+            e.target.value = null;
           };
 
           const removeModel = (id, e) => {
@@ -541,7 +380,9 @@
 
           const handleThumbnailCaptured = (id, dataUrl) => {
               setModels(prev => prev.map(m => {
-                  if (m.id === id && !m.thumbnail) { return { ...m, thumbnail: dataUrl }; }
+                  if (m.id === id && !m.thumbnail) {
+                      return { ...m, thumbnail: dataUrl };
+                  }
                   return m;
               }));
           };
@@ -615,12 +456,13 @@
           };
 
           const currentModel = models.find(m => m.id === selectedId);
-          const currentStats = calculateItem(currentModel);
-          const hasOversizedSelected = models.some(model => model.isSelected && calculateItem(model).isOversized);
-          const selectedCount = models.filter(m => m.isSelected).length;
+          const currentStats = currentModel ? calculateItem(currentModel) : null;
+          const selectedItems = models.filter(m => m.isSelected);
+          const hasOversizedSelected = selectedItems.some(model => calculateItem(model).isOversized);
+          const selectedCount = selectedItems.length;
+
           const getTotalStats = () => {
-             return models.reduce((acc, model) => {
-                if (!model.isSelected) return acc;
+             return selectedItems.reduce((acc, model) => {
                 const stats = calculateItem(model);
                 return {
                     weight: acc.weight + stats.weight,
@@ -631,74 +473,42 @@
           };
           const totalStats = getTotalStats();
 
-          if (authLoading) {
-              return (
-                <div className="flex h-screen w-full items-center justify-center bg-[#121212] text-white">
-                    <Loader2 className="animate-spin mr-3 text-blue-500" size={32} /> 
-                    <span className="font-medium tracking-wide">กำลังเตรียมระบบ...</span>
-                </div>
-              );
-          }
+          const handleMainButtonClick = () => {
+              if (!isCalculated) {
+                  setIsCalculated(true);
+              } else {
+                  if (selectedCount > 0 && !hasOversizedSelected) {
+                      setIsCheckoutOpen(true);
+                  }
+              }
+          };
 
           return (
             <div className="flex h-screen w-full bg-[#121212] text-gray-200 font-sans overflow-hidden">
               
               {/* --- Left Sidebar --- */}
               <div className="w-80 flex-shrink-0 bg-[#1e1e1e] border-r border-gray-800 flex flex-col z-10 shadow-xl">
-                <div className="p-4 border-b border-gray-800 bg-[#1e1e1e] flex flex-col gap-3">
-                   <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center overflow-hidden shrink-0 shadow-md">
-                            <img 
-                                src="https://scontent.fbkk28-1.fna.fbcdn.net/v/t39.30808-6/598306091_797957606585041_8616164852380810593_n.jpg?_nc_cat=102&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=79gJpJfIf1EQ7kNvwE_I-8L&_nc_oc=AdkURCkUHQjXqJHzJ7ePul3rEuzH3OE6TlBL_E8VqBfY-2xGp1EoPRGbYeMJ-ihYUP0&_nc_zt=23&_nc_ht=scontent.fbkk28-1.fna&_nc_gid=ej2XoHkUNDcyfRkgmxJ6-Q&oh=00_AfnXiQ7ZnmY_6WzBLVGzKWauVO9T29ZKcf1caBGWylaw0g&oe=69496172" 
-                                alt="FOCOLAB" 
-                                className="w-full h-full object-contain"
-                                onError={(e) => { e.target.onerror = null; e.target.src = "https://cdn-icons-png.flaticon.com/512/2967/2967262.png"; }}
-                            />
-                        </div>
-                        <div>
-                            <h1 className="text-xl font-bold text-white tracking-tight leading-none">FOCOLAB</h1>
-                            <p className="text-[10px] text-gray-400">3D Printing Service</p>
-                        </div>
-                   </div>
-                   
-                   {user ? (
-                       <div className="flex items-center justify-between bg-blue-900/20 border border-blue-500/30 p-2.5 rounded-xl animate-fadeIn">
-                           <div className="flex items-center gap-2 overflow-hidden">
-                                {user.photoURL ? (
-                                    <img src={user.photoURL} alt="User" className="w-7 h-7 rounded-full border border-blue-500/50 shadow-sm" />
-                                ) : (
-                                    <div className="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 shadow-sm">
-                                        {user.name.charAt(0).toUpperCase()}
-                                    </div>
-                                )}
-                                <div className="flex flex-col min-w-0">
-                                    <span className="text-xs font-semibold text-blue-100 truncate">{user.name}</span>
-                                    <span className="text-[9px] text-blue-300/70 truncate">{user.email}</span>
-                                </div>
-                           </div>
-                           <button onClick={handleLogout} title="Logout" className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all">
-                               <LogOut size={16} />
-                           </button>
-                       </div>
-                   ) : (
-                       <button 
-                            onClick={() => setShowAuthModal(true)}
-                            className="flex items-center justify-center gap-2 w-full py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-xl text-xs transition-all text-gray-300 font-semibold shadow-sm"
-                       >
-                           <LogIn size={16} /> เข้าสู่ระบบเพื่อเริ่มใช้งาน
-                       </button>
-                   )}
+                <div className="p-6 border-b border-gray-800 flex items-center gap-4">
+                    <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center overflow-hidden shadow-lg shrink-0">
+                        <img 
+                            src="https://scontent.fbkk28-1.fna.fbcdn.net/v/t39.30808-6/598306091_797957606585041_8616164852380810593_n.jpg?_nc_cat=102&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=79gJpJfIf1EQ7kNvwE_I-8L&_nc_oc=AdkURCkUHQjXqJHzJ7ePul3rEuzH3OE6TlBL_E8VqBfY-2xGp1EoPRGbYeMJ-ihYUP0&_nc_zt=23&_nc_ht=scontent.fbkk28-1.fna&_nc_gid=ej2XoHkUNDcyfRkgmxJ6-Q&oh=00_AfnXiQ7ZnmY_6WzBLVGzKWauVO9T29ZKcf1caBGWylaw0g&oe=69496172" 
+                            alt="FOCOLAB" 
+                            className="w-full h-full object-contain"
+                            onError={(e) => { e.target.onerror = null; e.target.src = "https://cdn-icons-png.flaticon.com/512/2967/2967262.png"; }}
+                        />
+                    </div>
+                    <div><h1 className="text-xl font-black text-white leading-none">FOCOLAB</h1><p className="text-[9px] text-gray-500 font-black uppercase tracking-[0.2em] mt-1">3D Print Studio</p></div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  <div className="flex items-center justify-between pb-2 border-b border-gray-800/50">
+                  <div className="flex items-center justify-between pb-2">
                       <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">รายการงานพิมพ์</h2>
                       {models.length > 0 && (
                         <button 
                             onClick={toggleSelectAll} 
-                            className="text-[10px] text-gray-400 flex items-center gap-1 hover:text-white transition-colors"
+                            className="text-[10px] text-gray-400 flex items-center gap-1 hover:text-white"
                         >
-                            {models.every(m => m.isSelected) ? <CheckSquare size={12} className="text-blue-500" /> : <Square size={12} />}
+                            {models.every(m => m.isSelected) ? <CheckSquare size={12} /> : <Square size={12} />}
                             เลือกทั้งหมด
                         </button>
                       )}
@@ -710,46 +520,79 @@
                         <div 
                           key={model.id}
                           onClick={() => setSelectedId(model.id)}
-                          className={`group relative p-2 pl-3 rounded-xl cursor-pointer border transition-all ${
+                          className={`group relative p-2 pl-3 rounded-lg cursor-pointer border transition-all ${
                             selectedId === model.id 
-                              ? 'bg-gray-800 border-blue-500 shadow-lg ring-1 ring-blue-500/20' 
+                              ? 'bg-gray-800 border-blue-500 shadow-md' 
                               : 'bg-[#252525] border-transparent hover:bg-gray-800'
                           } ${stats.isOversized ? 'border-red-500/50 bg-red-900/10' : ''}`}
                         >
                           <div className="flex items-start gap-3">
                             <div className="pt-4" onClick={(e) => e.stopPropagation()}>
-                                <input type="checkbox" checked={model.isSelected} onChange={() => toggleSelection(model.id)} className="w-4 h-4 accent-blue-500 rounded cursor-pointer"/>
+                                <input 
+                                    type="checkbox" 
+                                    checked={model.isSelected} 
+                                    onChange={() => toggleSelection(model.id)}
+                                    className="w-4 h-4 accent-blue-500 rounded cursor-pointer"
+                                />
                             </div>
+
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-3 overflow-hidden mb-2">
-                                    <div className="w-14 h-14 rounded-lg bg-gray-900 border border-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0 relative shadow-inner">
+                                    <div className="w-14 h-14 rounded-lg bg-gray-900 border border-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0 relative">
                                         {model.thumbnail ? (
                                             <img src={model.thumbnail} alt="Thumbnail" className="w-full h-full object-cover" />
                                         ) : (
-                                            <div className="flex flex-col items-center justify-center text-gray-600"><ImageIcon size={18} /><span className="text-[9px] mt-1 font-bold">{model.type.toUpperCase()}</span></div>
+                                            <div className="flex flex-col items-center justify-center text-gray-500">
+                                                <ImageIcon size={16} />
+                                                <span className="text-[9px] mt-1">{model.type.toUpperCase()}</span>
+                                            </div>
                                         )}
-                                        {stats.isOversized && (<div className="absolute inset-0 bg-black/60 flex items-center justify-center"><AlertTriangle size={20} className="text-red-500" /></div>)}
+                                        {stats.isOversized && (
+                                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                                                <AlertTriangle size={20} className="text-red-500" />
+                                            </div>
+                                        )}
                                     </div>
+                                    
                                     <div className="flex-1 min-w-0">
                                         <p className="text-sm font-medium text-white truncate">{model.name}</p>
-                                        <p className="text-[11px] text-gray-500 truncate leading-relaxed">{model.settings.material} • {stats.colorName}</p>
+                                        <p className="text-xs text-gray-500 truncate">
+                                        {model.settings.material} • {stats.colorName}
+                                        </p>
                                     </div>
                                 </div>
+
                                 <div className="flex justify-between items-center text-xs border-t border-gray-700/50 pt-2">
-                                    <span className="text-gray-400 flex items-center gap-1">{isCalculated && !stats.isOversized ? <><Clock size={11} /> {formatTime(stats.time)}</> : '-'}</span>
-                                    {stats.isOversized ? (<span className="text-red-400 font-bold flex items-center gap-1"><AlertTriangle size={11} /> ขนาดเกิน</span>) : (<span className={`text-sm font-bold ${isCalculated ? 'text-blue-400' : 'text-gray-600'}`}>{isCalculated ? `฿${Math.ceil(stats.price)}` : 'รอประเมิน'}</span>)}
+                                    <span className="text-gray-400 flex items-center gap-1">
+                                        {isCalculated && !stats.isOversized ? <><Clock size={10} /> {formatTime(stats.time)}</> : '-'}
+                                    </span>
+                                    {stats.isOversized ? (
+                                        <span className="text-red-400 font-bold flex items-center gap-1">
+                                            <AlertTriangle size={10} /> ขนาดเกิน
+                                        </span>
+                                    ) : (
+                                        <span className={`text-sm font-bold ${isCalculated ? 'text-blue-400' : 'text-gray-600'}`}>
+                                            {isCalculated ? `฿${Math.ceil(stats.price)}` : 'รอประเมิน'}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
-                            <button onClick={(e) => removeModel(model.id, e)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/20 hover:text-red-500 rounded-lg transition-all"><Trash2 size={14} /></button>
+
+                            <button 
+                              onClick={(e) => removeModel(model.id, e)}
+                              className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 hover:text-red-500 rounded transition-all"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         </div>
                     );
                   })}
 
                   {models.length === 0 && (
-                    <div className="text-center py-12 px-4 opacity-40 border-2 border-dashed border-gray-700 rounded-2xl flex flex-col items-center gap-3">
-                      <Layers size={40} className="text-gray-600" />
-                      <p className="text-sm font-medium">ยังไม่มีไฟล์งานในระบบ</p>
+                    <div className="text-center py-10 opacity-50 border-2 border-dashed border-gray-700 rounded-lg">
+                      <Layers size={32} className="mx-auto mb-2" />
+                      <p className="text-sm">ยังไม่มีไฟล์งาน</p>
                     </div>
                   )}
                 </div>
@@ -757,48 +600,53 @@
                 <div className="p-4 border-t border-gray-800 bg-[#1e1e1e]">
                    <button 
                         onClick={handleUploadClick}
-                        className={`flex items-center justify-center w-full gap-2 p-3.5 rounded-xl transition-all border border-dashed font-semibold text-sm ${
-                            user 
-                            ? 'bg-gray-800 hover:bg-gray-700 text-white border-gray-600 shadow-lg active:scale-[0.98]' 
-                            : 'bg-gray-900 text-gray-500 border-gray-800 cursor-not-allowed opacity-80'
-                        }`}
+                        className="flex items-center justify-center w-full gap-2 p-3 rounded-lg transition-colors border border-dashed bg-gray-800 hover:bg-gray-700 text-white border-gray-600 cursor-pointer"
                    >
-                      {user ? <Upload size={18} /> : <Lock size={18} />}
-                      <span>{user ? 'เพิ่มไฟล์งาน (STL/OBJ)' : 'เข้าสู่ระบบเพื่ออัปโหลด'}</span>
+                      <Upload size={18} />
+                      <span>เพิ่มไฟล์งาน (STL/OBJ)</span>
                    </button>
-                   <input id="file-upload-input" type="file" accept=".stl,.obj" multiple onChange={handleFileUpload} className="hidden" />
+                   <input id="file-upload-input" type="file" accept=".stl,.obj" multiple onChange={handleUpload} className="hidden" />
                 </div>
               </div>
 
-              {/* --- Center: Viewer --- */}
+              {/* --- Center: 3D Viewer --- */}
               <div className="flex-1 relative bg-[#0f0f0f] overflow-hidden">
                 {currentModel ? (
-                  <Canvas shadows camera={{ position: [0, 0, 150], fov: 50 }} gl={{ preserveDrawingBuffer: true }}>
+                  <Canvas shadows camera={{ position: [0, 50, 150], fov: 45 }} gl={{ preserveDrawingBuffer: true }}>
                     <Suspense fallback={<LoaderFallback />}>
+                      <SceneHelpers />
                       <Stage environment="city" intensity={0.5} contactShadow={{ opacity: 0.7, blur: 2 }}>
                         <ModelViewer 
                           fileUrl={currentModel.url} 
                           fileType={currentModel.type} 
                           scale={currentModel.settings.scale}
                           colorHex={currentStats.colorHex}
-                          onModelLoaded={() => {}}
+                          onModelLoaded={() => {/* Handled by ScreenshotTaker via re-render trigger */}}
                         />
-                        <ModelAnalyzer fileUrl={currentModel.url} fileType={currentModel.type} id={currentModel.id} onAnalyzed={handleAnalyzed} />
+                        <ModelAnalyzer 
+                          fileUrl={currentModel.url} 
+                          fileType={currentModel.type} 
+                          id={currentModel.id}
+                          onAnalyzed={handleAnalyzed}
+                        />
                         <ScreenshotTaker onCaptured={(dataUrl) => handleThumbnailCaptured(currentModel.id, dataUrl)} />
                       </Stage>
-                      <OrbitControls makeDefault minDistance={50} maxDistance={400} />
+                      <OrbitControls makeDefault />
                     </Suspense>
                   </Canvas>
                 ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-gray-700 select-none bg-[#0f0f0f]">
-                    <div className="opacity-10 mb-6 scale-150"><img src="https://cdn-icons-png.flaticon.com/512/2967/2967262.png" alt="Logo" className="w-32 h-32 grayscale" /></div>
-                    <p className="text-lg font-medium tracking-wide text-gray-600">เลือกงานจากรายการ หรืออัปโหลดใหม่เพื่อพรีวิว</p>
+                  <div className="flex flex-col items-center justify-center h-full text-gray-600 select-none">
+                    <div className="opacity-10 mb-4">
+                        <img src="https://cdn-icons-png.flaticon.com/512/2967/2967262.png" alt="Logo" className="w-24 h-24 grayscale" />
+                    </div>
+                    <p>เลือกงานจากรายการ หรืออัปโหลดใหม่</p>
                   </div>
                 )}
+                
                 {currentModel && currentStats.isOversized && (
-                    <div className="absolute top-6 left-1/2 transform -translate-x-1/2 bg-red-600/90 backdrop-blur text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-fadeIn border border-red-400/30">
-                        <AlertTriangle size={24} />
-                        <span className="font-bold tracking-wide text-sm uppercase">ขนาดชิ้นงานเกิน {MAX_BUILD_VOLUME}mm กรุณาปรับลดขนาด</span>
+                    <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600/90 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-bounce">
+                        <AlertTriangle size={20} />
+                        <span>ขนาดชิ้นงานเกิน {MAX_BUILD_VOLUME}mm กรุณาปรับลดขนาด</span>
                     </div>
                 )}
               </div>
@@ -806,128 +654,238 @@
               {/* --- Right Sidebar: Settings --- */}
               {currentModel ? (
                 <div className="w-80 flex-shrink-0 bg-[#1e1e1e] border-l border-gray-800 flex flex-col overflow-y-auto z-10 shadow-xl">
-                  <div className="p-5 border-b border-gray-800 bg-[#1e1e1e] flex flex-col gap-1">
-                     <h2 className="text-base font-bold text-white flex items-center gap-2 tracking-wide"><Settings size={18} className="text-blue-500" /> ตั้งค่าการพิมพ์</h2>
-                     <p className="text-[11px] text-gray-400 truncate w-full italic">{currentModel.name}</p>
+                  <div className="p-4 border-b border-gray-800 bg-[#1e1e1e]">
+                     <h2 className="text-lg font-semibold text-white">ตั้งค่าการพิมพ์</h2>
+                     <p className="text-xs text-gray-400 truncate w-full">{currentModel.name}</p>
                   </div>
-                  <div className="p-5 space-y-6">
-                    {/* Size Settings */}
-                    <div className={`bg-[#252525] p-4 rounded-2xl border transition-all duration-300 ${currentStats.isOversized ? 'border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.1)]' : 'border-gray-700 shadow-sm'}`}>
-                      <div className="flex items-center justify-between mb-4">
-                        <label className={`text-xs font-bold uppercase tracking-widest flex items-center gap-2 ${currentStats.isOversized ? 'text-red-400' : 'text-gray-400'}`}><Ruler size={14} /> ขนาดจริง (mm)</label>
-                        <button onClick={() => toggleUniform(currentModel.id)} className={`flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-lg transition-all border font-bold ${currentModel.settings.uniformScale ? 'bg-blue-500/20 text-blue-400 border-blue-500/50' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{currentModel.settings.uniformScale ? <Lock size={11} /> : <Unlock size={11} />} {currentModel.settings.uniformScale ? 'ล็อกสัดส่วน' : 'อิสระ'}</button>
+
+                  <div className="p-4 space-y-6">
+                    
+                    <div className={`bg-[#252525] p-3 rounded-lg border ${currentStats.isOversized ? 'border-red-500' : 'border-gray-700'}`}>
+                      <div className="flex items-center justify-between mb-3">
+                        <label className={`text-sm font-medium flex items-center gap-2 ${currentStats.isOversized ? 'text-red-400' : 'text-gray-300'}`}>
+                          <Ruler size={14} /> ขนาดชิ้นงาน (mm)
+                        </label>
+                        <button 
+                            onClick={() => toggleUniform(currentModel.id)}
+                            className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded transition-colors ${currentModel.settings.uniformScale ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50' : 'bg-gray-700 text-gray-400 border border-transparent'}`}
+                            title="ล็อกอัตราส่วน (Uniform Scale)"
+                        >
+                            {currentModel.settings.uniformScale ? <Lock size={10} /> : <Unlock size={10} />} Uniform
+                        </button>
                       </div>
-                      <div className="grid grid-cols-3 gap-3 mb-4">
+                      
+                      <div className="grid grid-cols-3 gap-2 mb-3">
                          {['x', 'y', 'z'].map(axis => (
-                            <div key={axis} className="flex flex-col gap-1.5">
-                                <label className="text-[10px] text-center font-bold text-gray-500 uppercase">{axis}</label>
-                                <SmartInput value={currentStats.dimensions[axis]} onChange={(val) => handleDimensionChange(currentModel.id, axis, val)} step="0.1" className={`w-full bg-[#1a1a1a] border rounded-lg px-2 py-2 text-xs text-center text-white focus:outline-none transition-all ${currentStats.dimensions[axis] > MAX_BUILD_VOLUME ? 'border-red-500 text-red-200 bg-red-900/30' : 'border-gray-600 focus:border-blue-500'}`} />
+                            <div key={axis}>
+                                <label className="text-[10px] text-center block text-gray-500 uppercase mb-1">{axis}</label>
+                                <SmartInput 
+                                    value={currentStats.dimensions[axis]}
+                                    onChange={(val) => handleDimensionChange(currentModel.id, axis, val)}
+                                    step="0.1"
+                                    className={`w-full bg-gray-800 border rounded px-2 py-1 text-xs text-center text-white focus:outline-none 
+                                        ${currentStats.dimensions[axis] > MAX_BUILD_VOLUME 
+                                            ? 'border-red-500 text-red-100 bg-red-900/20' 
+                                            : 'border-gray-600 focus:border-blue-500'}`}
+                                />
                             </div>
                          ))}
                       </div>
-                      {currentStats.isOversized && (<div className="text-[10px] text-red-400 text-center mb-3 flex items-center justify-center gap-1"><AlertTriangle size={10} /> ขนาดต้องไม่เกิน {MAX_BUILD_VOLUME}mm</div>)}
-                      <div className="flex items-center justify-between mb-2"><label className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter">Scale Factor (%)</label></div>
-                      <div className="grid grid-cols-3 gap-3">
-                        {['x', 'y', 'z'].map(axis => (<div key={`scale-${axis}`}><SmartInput value={currentModel.settings.scale[axis] * 100} onChange={(val) => handleScaleChange(currentModel.id, axis, val / 100)} step="1" className="w-full bg-[#1a1a1a] border border-gray-700 rounded-lg px-2 py-2 text-xs text-center text-gray-400 focus:border-blue-400 focus:text-white outline-none transition-all" /></div>))}
+
+                      {currentStats.isOversized && (
+                          <div className="text-[10px] text-red-400 text-center mb-3 flex items-center justify-center gap-1">
+                              <AlertTriangle size={10} /> ขนาดต้องไม่เกิน {MAX_BUILD_VOLUME}mm
+                          </div>
+                      )}
+
+                      <div className="flex items-center justify-between mb-2">
+                         <label className="text-[10px] text-gray-500">Scale (%)</label>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['x', 'y', 'z'].map(axis => (
+                           <div key={`scale-${axis}`}>
+                              <SmartInput 
+                                value={currentModel.settings.scale[axis] * 100}
+                                onChange={(val) => handleScaleChange(currentModel.id, axis, val / 100)}
+                                step="1"
+                                className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-center text-gray-400 focus:border-blue-500 outline-none"
+                              />
+                           </div>
+                        ))}
                       </div>
                     </div>
 
-                    <div className="space-y-5">
+                    <div className="space-y-4">
                         <div>
-                            <label className="text-xs font-bold text-gray-400 mb-3 block uppercase tracking-wider">วัสดุที่ใช้พิมพ์</label>
-                            <div className="grid grid-cols-2 gap-2.5">{Object.keys(MATERIALS).map(mat => (<button key={mat} onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, material: mat })} className={`text-xs py-2.5 rounded-xl border-2 font-bold transition-all ${currentModel.settings.material === mat ? 'border-blue-500 bg-blue-500/10 text-blue-400 shadow-md scale-[1.02]' : 'border-gray-800 bg-[#252525] text-gray-500 hover:border-gray-700'}`}>{mat}</button>))}</div>
-                        </div>
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 mb-3 block uppercase tracking-wider flex items-center gap-2"><Palette size={14} /> สีของชิ้นงาน</label>
-                            <div className="space-y-3">
-                                <div className="flex flex-wrap gap-3">{COLORS.map(color => (<button key={color.id} onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, colorId: color.id })} className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${currentModel.settings.colorId === color.id ? 'border-blue-500 scale-110 shadow-lg' : 'border-gray-700 hover:border-gray-500'}`} title={color.name} style={{ backgroundColor: color.hex }}>{currentModel.settings.colorId === color.id && <CheckCircle size={16} className={color.id === 'white' ? "text-black drop-shadow-md" : "text-white drop-shadow-md"} />}</button>))}</div>
-                                {currentModel.settings.colorId === 'other' && (<div className="animate-fadeIn"><input type="text" placeholder="ระบุสีที่ต้องการ..." value={currentModel.settings.customColor} onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, customColor: e.target.value })} className="w-full bg-[#252525] border border-blue-500/40 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-inner" /></div>)}
-                                <p className="text-[11px] text-gray-500 pl-1 font-medium">สีปัจจุบัน: <span className="text-gray-300 italic">{currentStats.colorName}</span></p>
+                            <label className="text-sm font-medium text-gray-300 mb-2 block">วัสดุ (Material)</label>
+                            <div className="grid grid-cols-2 gap-2">
+                            {Object.keys(MATERIALS).map(mat => (
+                                <button
+                                key={mat}
+                                onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, material: mat })}
+                                className={`text-xs py-2 rounded border transition-all ${
+                                    currentModel.settings.material === mat 
+                                    ? 'border-blue-500 bg-blue-500/10 text-blue-500 font-bold' 
+                                    : 'border-gray-600 bg-gray-800 text-gray-400 hover:border-gray-500'
+                                }`}
+                                >
+                                {mat}
+                                </button>
+                            ))}
                             </div>
                         </div>
+
                         <div>
-                            <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider">ความละเอียด (Layer Height)</label>
-                            <select value={currentModel.settings.layerHeight} onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, layerHeight: parseFloat(e.target.value) })} className="w-full bg-[#252525] text-white text-xs border border-gray-700 rounded-xl p-3 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 outline-none transition-all shadow-sm">{LAYER_HEIGHTS.map(h => (<option key={h.value} value={h.value}>{h.label}</option>))}</select>
+                            <label className="text-sm font-medium text-gray-300 mb-2 block flex items-center gap-2">
+                                <Palette size={14} /> เลือกสี (Color)
+                            </label>
+                            <div className="space-y-2">
+                                <div className="flex flex-wrap gap-2">
+                                    {COLORS.map(color => (
+                                        <button
+                                            key={color.id}
+                                            onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, colorId: color.id })}
+                                            className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${
+                                                currentModel.settings.colorId === color.id
+                                                ? 'border-blue-500 scale-110 shadow-[0_0_10px_rgba(59,130,246,0.5)]'
+                                                : 'border-gray-600 hover:border-gray-400'
+                                            }`}
+                                            title={color.name}
+                                            style={{ backgroundColor: color.hex }}
+                                        >
+                                            {currentModel.settings.colorId === color.id && color.id !== 'white' && (
+                                                <CheckCircle size={14} className="text-white drop-shadow-md" />
+                                            )}
+                                            {currentModel.settings.colorId === color.id && color.id === 'white' && (
+                                                <CheckCircle size={14} className="text-black drop-shadow-md" />
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                                
+                                {currentModel.settings.colorId === 'other' && (
+                                    <div className="animate-[fadeIn_0.2s_ease-out]">
+                                        <input 
+                                            type="text" 
+                                            placeholder="ระบุสีที่ต้องการ..."
+                                            value={currentModel.settings.customColor}
+                                            onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, customColor: e.target.value })}
+                                            className="w-full bg-gray-800 border border-blue-500/50 rounded px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                )}
+                                
+                                <p className="text-xs text-gray-500 mt-1">
+                                    สีที่เลือก: <span className="text-gray-300">{currentStats.colorName}</span>
+                                </p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="text-sm font-medium text-gray-300 mb-2 block">ความละเอียด (Layer Height)</label>
+                            <select 
+                                value={currentModel.settings.layerHeight}
+                                onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, layerHeight: parseFloat(e.target.value) })}
+                                className="w-full bg-gray-800 text-white text-sm border border-gray-600 rounded p-2 focus:border-blue-500 outline-none"
+                            >
+                                {LAYER_HEIGHTS.map(h => (
+                                    <option key={h.value} value={h.value}>{h.label}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
 
-                    <div className="bg-[#252525] p-4 rounded-2xl border border-gray-700 space-y-5 shadow-sm">
-                       <div><div className="flex justify-between text-xs font-bold mb-2.5"><span className="text-gray-400">INFILL (ความแน่นภายใน)</span><span className="text-blue-400">{currentModel.settings.infill}%</span></div><input type="range" min="10" max="100" step="5" value={currentModel.settings.infill} onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, infill: parseInt(e.target.value) })} className="w-full h-1.5 bg-[#1a1a1a] rounded-lg appearance-none cursor-pointer accent-blue-500" /></div>
-                       <div className="flex items-center justify-between"><span className="text-xs font-bold text-gray-400">ใช้ SUPPORT (ฐานรอง)?</span><button onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, supportEnabled: !currentModel.settings.supportEnabled })} className={`w-11 h-6 rounded-full relative transition-all duration-300 shadow-inner ${currentModel.settings.supportEnabled ? 'bg-blue-600' : 'bg-gray-700'}`}><div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-md transition-all duration-300 ${currentModel.settings.supportEnabled ? 'left-6' : 'left-1'}`} /></button></div>
+                    <div className="bg-[#252525] p-3 rounded-lg border border-gray-700 space-y-4">
+                       <div>
+                          <div className="flex justify-between text-sm mb-1">
+                             <span className="text-gray-300">Infill (ความหนาแน่น)</span>
+                             <span className="text-blue-400">{currentModel.settings.infill}%</span>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="10" 
+                            max="100" 
+                            step="5"
+                            value={currentModel.settings.infill}
+                            onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, infill: parseInt(e.target.value) })}
+                            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                       </div>
+
+                       <div className="flex items-center justify-between">
+                          <span className="text-sm text-gray-300">ใช้ Support/Raft?</span>
+                          <button 
+                            onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, supportEnabled: !currentModel.settings.supportEnabled })}
+                            className={`w-10 h-5 rounded-full relative transition-colors ${currentModel.settings.supportEnabled ? 'bg-blue-500' : 'bg-gray-600'}`}
+                          >
+                             <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${currentModel.settings.supportEnabled ? 'left-6' : 'left-1'}`} />
+                          </button>
+                       </div>
                     </div>
 
                     {!currentStats.isOversized && (
-                        <div className="text-[11px] text-gray-500 bg-[#252525] p-4 rounded-2xl border border-gray-700 space-y-2.5 shadow-inner text-gray-400">
-                            <div className="flex justify-between px-1"><span>น้ำหนักประเมิน:</span><span className="font-bold text-gray-300">{isCalculated ? `${currentStats.weight.toFixed(1)} กรัม` : '-'}</span></div>
-                            <div className="flex justify-between px-1"><span>เวลาพิมพ์ประเมิน:</span><span className="font-bold text-gray-300">{isCalculated ? formatTime(currentStats.time) : '-'}</span></div>
+                        <div className="text-xs text-gray-500 bg-[#252525] p-3 rounded border border-gray-700 space-y-1">
+                            <div className="flex justify-between">
+                                <span>น้ำหนัก:</span>
+                                <span>{isCalculated ? `${currentStats.weight.toFixed(1)} g` : '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>เวลาพิมพ์โดยประมาณ:</span>
+                                <span>{isCalculated ? formatTime(currentStats.time) : '-'}</span>
+                            </div>
                         </div>
                     )}
+
                   </div>
 
-                  <div className="mt-auto bg-[#1a1a1a] p-5 border-t border-gray-800 sticky bottom-0 z-20">
-                     <div className="flex justify-between items-end mb-5">
-                        <div className="text-gray-500 text-[10px] italic">
-                           <p>รวมค่าบริการพื้นฐาน 100.- แล้ว</p>
+                  <div className="mt-auto bg-[#1a1a1a] p-4 border-t border-gray-800 sticky bottom-0">
+                     <div className="flex justify-between items-end mb-4">
+                        <div className="text-gray-400 text-xs">
+                           <p>รวมค่าบริการพื้นฐานแล้ว</p>
                         </div>
                         <div className="text-right">
-                           <p className="text-[11px] font-bold text-gray-500 mb-1 uppercase tracking-widest">ราคาประเมินต่อชิ้น</p>
-                           <p className={`text-4xl font-black ${currentStats.isOversized ? 'text-red-500' : 'text-white'} transition-colors`}>
+                           <p className="text-xs text-gray-500 mb-1">ราคาต่อชิ้น</p>
+                           <p className={`text-3xl font-bold ${currentStats.isOversized ? 'text-red-500' : 'text-white'}`}>
                                {currentStats.isOversized ? 'เกินขนาด' : (isCalculated ? `฿${Math.ceil(currentStats.price)}` : '---')}
                            </p>
                         </div>
                      </div>
                      
                      <button 
-                        onClick={() => { if(!hasOversizedSelected && selectedCount > 0) { setIsCalculated(true); setIsCheckoutOpen(true); } }} 
-                        disabled={hasOversizedSelected || selectedCount === 0} 
-                        className={`w-full py-4 font-black rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3 text-sm tracking-wide ${
-                            hasOversizedSelected || selectedCount === 0 
-                            ? 'bg-gray-800 text-gray-600 border border-gray-700 cursor-not-allowed' 
+                        onClick={handleMainButtonClick}
+                        disabled={hasOversizedSelected || selectedCount === 0}
+                        className={`w-full py-3 font-bold rounded-lg shadow-lg transition-all flex items-center justify-center gap-2 ${
+                            hasOversizedSelected || selectedCount === 0
+                            ? 'bg-gray-600 cursor-not-allowed opacity-50'
                             : (isCalculated 
-                                ? 'bg-green-600 hover:bg-green-700 text-white shadow-green-900/30 active:scale-[0.97]' 
-                                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-900/30 active:scale-[0.97]')
+                                ? 'bg-green-600 hover:bg-green-700 text-white shadow-green-900/20 active:scale-95' 
+                                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-900/20 active:scale-95')
                         }`}
                      >
-                        {hasOversizedSelected ? <AlertTriangle size={20} /> : <Calculator size={20} />}
-                        {hasOversizedSelected ? 'แก้ไขขนาดก่อนสั่งพิมพ์' : (selectedCount === 0 ? 'กรุณาเลือกงานด้านซ้าย' : (isCalculated ? `สั่งพิมพ์ (${selectedCount} รายการ)` : 'เริ่มการประเมินราคา'))}
+                        {hasOversizedSelected ? <AlertTriangle size={18} /> : <Calculator size={18} />}
+                        {hasOversizedSelected 
+                            ? 'งานที่เลือกเกินขนาด' 
+                            : (selectedCount === 0 
+                                ? 'กรุณาเลือกงาน' 
+                                : (isCalculated ? `สั่งพิมพ์ (${selectedCount}) / Checkout` : 'ประเมินราคา / Estimate'))}
                      </button>
                   </div>
                 </div>
               ) : (
-                <div className="w-80 bg-[#1e1e1e] border-l border-gray-800 flex flex-col items-center justify-center text-gray-500 p-8 text-center z-10 text-gray-600">
-                    <div className="p-6 bg-gray-800/50 rounded-full mb-6 ring-4 ring-gray-800/20"><Settings size={56} className="opacity-20 animate-pulse" /></div>
-                    <p className="text-sm font-semibold tracking-wide leading-relaxed">กรุณาเลือกหรืออัปโหลดงาน<br/>เพื่อตั้งค่าพารามิเตอร์การพิมพ์</p>
+                <div className="w-80 bg-[#1e1e1e] border-l border-gray-800 flex flex-col items-center justify-center text-gray-500 p-6 text-center z-10">
+                   <Settings size={48} className="mb-4 opacity-20" />
+                   <p className="text-sm">เลือกงานเพื่อตั้งค่า</p>
                 </div>
               )}
 
-              {/* --- Modals --- */}
-              {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} onSuccess={() => setShowAuthModal(false)} />}
-
               {isCheckoutOpen && !hasOversizedSelected && selectedCount > 0 && (
-                  <div className="absolute inset-0 z-[110] flex items-center justify-center modal-overlay p-4">
-                      <div className="bg-[#1e1e1e] w-full max-w-md rounded-3xl border border-gray-700 shadow-2xl overflow-hidden animate-fadeIn text-gray-200">
-                          <div className="p-5 border-b border-gray-800 flex justify-between items-center bg-[#252525]">
-                              <h3 className="text-lg font-bold text-white flex items-center gap-2.5"><CheckCircle size={22} className="text-green-500"/> รายละเอียดคำสั่งซื้อ</h3>
-                              <button onClick={() => setIsCheckoutOpen(false)} className="text-gray-500 hover:text-white transition-colors"><X size={22} /></button>
-                          </div>
-                          <div className="p-8 space-y-6">
-                              <div className="bg-[#1a1a1a] rounded-2xl p-5 space-y-3.5 border border-gray-800">
-                                  <div className="flex justify-between text-sm text-gray-400"><span>ไฟล์ที่เลือกพิมพ์:</span><span className="font-black text-white">{selectedCount} รายการ</span></div>
-                                  <div className="flex justify-between text-sm text-gray-400"><span>น้ำหนักรวมสุทธิ:</span><span className="font-black text-white">{totalStats.weight.toFixed(1)} กรัม</span></div>
-                                  <div className="flex justify-between text-sm text-gray-400"><span>เวลาพิมพ์รวมประเมิน:</span><span className="font-black text-white">{formatTime(totalStats.time)}</span></div>
-                              </div>
-                              <div className="flex justify-between items-center pt-2 px-1">
-                                  <span className="text-gray-500 font-bold uppercase tracking-widest text-xs">ยอดชำระสุทธิ</span>
-                                  <span className="text-5xl font-black text-blue-500">฿{Math.ceil(totalStats.price)}</span>
-                              </div>
-                              <p className="text-[10px] text-gray-500 text-center leading-relaxed italic px-4">
-                                  * ราคานี้รวมภาษีมูลค่าเพิ่ม ค่าวัสดุ ค่าเวลาเครื่อง และค่าบริการหลังการพิมพ์เรียบร้อยแล้ว
-                              </p>
-                              <button onClick={() => alert('ขอบคุณที่ใช้บริการ! กำลังเชื่อมต่อระบบชำระเงิน...')} className="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-black rounded-2xl transition-all shadow-lg shadow-green-900/20 active:scale-[0.98] uppercase tracking-widest">ดำเนินการชำระเงิน</button>
-                          </div>
-                      </div>
-                  </div>
+                  <CheckoutWizard 
+                      onClose={() => setIsCheckoutOpen(false)} 
+                      selectedItems={selectedItems}
+                      totalStats={totalStats}
+                  />
               )}
+
             </div>
           );
         }
@@ -937,4 +895,3 @@
     </script>
 </body>
 </html>
-
