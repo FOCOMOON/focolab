@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FOCOLAB - 3D Print Cost Estimator</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Import Map for React & Three.js modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "three": "https://esm.sh/three@0.160.0",
+            "three/examples/jsm/loaders/STLLoader.js": "https://esm.sh/three@0.160.0/examples/jsm/loaders/STLLoader.js?external=three",
+            "three/examples/jsm/loaders/OBJLoader.js": "https://esm.sh/three@0.160.0/examples/jsm/loaders/OBJLoader.js?external=three",
+            "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.15.12?external=react,react-dom,three",
+            "@react-three/drei": "https://esm.sh/@react-three/drei@9.99.0?external=react,react-dom,three,@react-three/fiber",
+            "lucide-react": "https://esm.sh/lucide-react@0.300.0?external=react"
+        }
+    }
+    </script>
+
+    <!-- Babel for JSX support in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body { margin: 0; background-color: #121212; color: white; overflow: hidden; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e1e1e; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #444; }
+        
+        .modal-overlay {
+            background-color: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(4px);
+        }
+
+        input[type=number]::-webkit-outer-spin-button,
+        input[type=number]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+        
+        .custom-checkbox {
+            cursor: pointer;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .animate-fadeIn {
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo, Suspense, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { Canvas, useLoader, useThree } from '@react-three/fiber';
+        import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+        import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+        import { OrbitControls, Center, Stage, Html, useProgress } from '@react-three/drei';
+        import * as THREE from 'three';
+        import { 
+          Upload, Trash2, Layers, Settings, 
+          Scale, Calculator, Clock, X, CheckCircle, Ruler, Lock, Unlock, Palette, Image as ImageIcon, AlertTriangle, CheckSquare, Square, LogIn, User, LogOut 
+        } from 'lucide-react';
+
+        // --- Constants & Config ---
+        const MATERIAL_COST_PER_GRAM = 1.5; 
+        const FIXED_COST_SETUP = 50;
+        const FIXED_COST_POST = 50;
+        const HOURLY_RATE = 4;
+        const MAX_BUILD_VOLUME = 235; 
+
+        const MATERIALS = {
+          PLA: { name: 'PLA', density: 1.24 },
+          PETG: { name: 'PETG', density: 1.27 },
+          ABS: { name: 'ABS', density: 1.04 },
+          TPU: { name: 'TPU', density: 1.21 }
+        };
+
+        const COLORS = [
+            { id: 'white', name: 'ขาว (White)', hex: '#FFFFFF' },
+            { id: 'black', name: 'ดำ (Black)', hex: '#333333' },
+            { id: 'grey', name: 'เทา (Grey)', hex: '#808080' },
+            { id: 'red', name: 'แดง (Red)', hex: '#EF4444' },
+            { id: 'other', name: 'อื่นๆ (ระบุ)', hex: '#3B82F6' }
+        ];
+
+        const LAYER_HEIGHTS = [
+            { value: 0.12, label: '0.12mm (ละเอียดมาก)', timeFactor: 1.8 },
+            { value: 0.16, label: '0.16mm (ละเอียด)', timeFactor: 1.4 },
+            { value: 0.20, label: '0.20mm (มาตรฐาน)', timeFactor: 1.0 },
+            { value: 0.28, label: '0.28mm (หยาบ/เร็ว)', timeFactor: 0.7 }
+        ];
+
+        // --- Helper Functions ---
+        const getVolume = (geometry) => {
+          if (!geometry || !geometry.isBufferGeometry) return 0;
+          let position = geometry.attributes.position;
+          if (!position) return 0;
+          
+          let faces = position.count / 3;
+          let sum = 0;
+          let p1 = new THREE.Vector3(), p2 = new THREE.Vector3(), p3 = new THREE.Vector3();
+          for (let i = 0; i < faces; i++) {
+            p1.fromBufferAttribute(position, i * 3 + 0);
+            p2.fromBufferAttribute(position, i * 3 + 1);
+            p3.fromBufferAttribute(position, i * 3 + 2);
+            sum += p1.dot(p2.cross(p3));
+          }
+          return Math.abs(sum / 6) / 1000; 
+        };
+
+        const formatTime = (totalHours) => {
+            const hours = Math.floor(totalHours);
+            const minutes = Math.round((totalHours - hours) * 60);
+            if (hours === 0 && minutes === 0) return "0 นาที";
+            if (hours === 0) return `${minutes} นาที`;
+            return `${hours} ชม. ${minutes} นาที`;
+        };
+
+        // --- Components ---
+        const SmartInput = ({ value, onChange, className, step = "0.1" }) => {
+            const [localValue, setLocalValue] = useState(value);
+            const [isEditing, setIsEditing] = useState(false);
+
+            useEffect(() => {
+                if (!isEditing) {
+                    setLocalValue(Number(value).toFixed(step.includes('.') ? 2 : 0));
+                }
+            }, [value, isEditing, step]);
+
+            const handleChange = (e) => {
+                const newValue = e.target.value;
+                setLocalValue(newValue);
+                if (newValue === '' || newValue === '-') return; 
+                const parsed = parseFloat(newValue);
+                if (!isNaN(parsed)) onChange(parsed);
+            };
+
+            const handleBlur = () => {
+                setIsEditing(false);
+                let finalVal = parseFloat(localValue);
+                if (isNaN(finalVal)) finalVal = 0;
+                setLocalValue(finalVal.toFixed(step.includes('.') ? 2 : 0));
+                onChange(finalVal);
+            };
+
+            return (
+                <input 
+                    type="number" 
+                    step={step}
+                    value={localValue}
+                    onChange={handleChange}
+                    onFocus={() => setIsEditing(true)}
+                    onBlur={handleBlur}
+                    className={className}
+                />
+            );
+        };
+
+        const ScreenshotTaker = ({ onCaptured }) => {
+            const { gl, scene, camera } = useThree();
+            useEffect(() => {
+                const timer = setTimeout(() => {
+                    try {
+                        const dataUrl = gl.domElement.toDataURL('image/png', 0.5);
+                        onCaptured(dataUrl);
+                    } catch (e) { console.error("Screenshot failed", e); }
+                }, 800); 
+                return () => clearTimeout(timer);
+            }, [gl, scene, camera, onCaptured]);
+            return null;
+        };
+
+        const ModelViewer = ({ fileUrl, fileType, scale, colorHex, onModelLoaded }) => {
+          const Loader = fileType === 'obj' ? OBJLoader : STLLoader;
+          const object = useLoader(Loader, fileUrl);
+
+          const meshGeometry = useMemo(() => {
+            if (fileType === 'obj') {
+              let foundGeo = null;
+              object.traverse((child) => {
+                if (child.isMesh && !foundGeo) foundGeo = child.geometry;
+              });
+              return foundGeo;
+            }
+            return object;
+          }, [object, fileType]);
+
+          useEffect(() => {
+              if (onModelLoaded) onModelLoaded();
+          }, [meshGeometry, onModelLoaded]);
+
+          if (!meshGeometry) return null;
+
+          return (
+            <Center>
+              <mesh geometry={meshGeometry} scale={[scale.x, scale.y, scale.z]} castShadow receiveShadow>
+                <meshStandardMaterial color={colorHex} roughness={0.5} metalness={0.1} />
+              </mesh>
+            </Center>
+          );
+        };
+
+        const LoaderFallback = () => {
+          const { progress } = useProgress();
+          return (
+            <Html center>
+                <div className="flex flex-col items-center gap-2">
+                    <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <div className="text-white font-mono text-sm">{progress.toFixed(0)}% loaded</div>
+                </div>
+            </Html>
+          );
+        };
+
+        const ModelAnalyzer = ({ fileUrl, fileType, id, onAnalyzed }) => {
+            const Loader = fileType === 'obj' ? OBJLoader : STLLoader;
+            const result = useLoader(Loader, fileUrl);
+            
+            useEffect(() => {
+              let vol = 0;
+              const box = new THREE.Box3();
+              if (fileType === 'obj') {
+                result.traverse(child => {
+                  if (child.isMesh) vol += getVolume(child.geometry);
+                });
+                box.setFromObject(result);
+              } else {
+                vol = getVolume(result);
+                result.computeBoundingBox();
+                box.copy(result.boundingBox);
+              }
+              const size = new THREE.Vector3();
+              box.getSize(size);
+              onAnalyzed(id, { volume: vol, originalSize: { x: size.x, y: size.y, z: size.z } });
+            }, [result, fileUrl, id, fileType, onAnalyzed]);
+            return null;
+        };
+
+        // --- Auth Components ---
+        const AuthModal = ({ onClose, onLogin }) => {
+            const [mode, setMode] = useState('login'); // 'login' or 'register'
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                // Mock Login Logic
+                if (email && password) {
+                    onLogin({ name: email.split('@')[0], email: email });
+                }
+            };
+
+            const handleGoogleLogin = () => {
+                // Mock Google Login Logic
+                onLogin({ name: 'Google User', email: 'user@gmail.com', isGoogle: true });
+            };
+
+            return (
+                <div className="absolute inset-0 z-[100] flex items-center justify-center modal-overlay p-4">
+                    <div className="bg-[#1e1e1e] w-full max-w-sm rounded-2xl border border-gray-700 shadow-2xl overflow-hidden animate-fadeIn relative">
+                        <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-white">
+                            <X size={20} />
+                        </button>
+                        
+                        <div className="p-8">
+                            <div className="text-center mb-6">
+                                <h2 className="text-2xl font-bold text-white mb-2">{mode === 'login' ? 'ยินดีต้อนรับกลับ' : 'สร้างบัญชีใหม่'}</h2>
+                                <p className="text-gray-400 text-sm">เข้าสู่ระบบเพื่อจัดการไฟล์งานของคุณ</p>
+                            </div>
+
+                            <div className="space-y-4">
+                                <button 
+                                    onClick={handleGoogleLogin}
+                                    className="w-full py-2.5 bg-white text-gray-800 font-semibold rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                                    </svg>
+                                    ดำเนินการต่อด้วย Google
+                                </button>
+
+                                <div className="relative flex py-2 items-center">
+                                    <div className="flex-grow border-t border-gray-700"></div>
+                                    <span className="flex-shrink-0 mx-4 text-gray-500 text-xs">หรือกรอกเอง</span>
+                                    <div className="flex-grow border-t border-gray-700"></div>
+                                </div>
+
+                                <form onSubmit={handleSubmit} className="space-y-3">
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">อีเมล</label>
+                                        <input 
+                                            type="email" 
+                                            required
+                                            value={email}
+                                            onChange={(e) => setEmail(e.target.value)}
+                                            className="w-full bg-[#252525] border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
+                                            placeholder="name@example.com"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-400 mb-1">รหัสผ่าน</label>
+                                        <input 
+                                            type="password" 
+                                            required
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            className="w-full bg-[#252525] border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none"
+                                            placeholder="••••••••"
+                                        />
+                                    </div>
+                                    <button type="submit" className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors">
+                                        {mode === 'login' ? 'เข้าสู่ระบบ' : 'สมัครสมาชิก'}
+                                    </button>
+                                </form>
+                            </div>
+
+                            <div className="mt-6 text-center text-xs text-gray-400">
+                                {mode === 'login' ? 'ยังไม่มีบัญชีใช่ไหม? ' : 'มีบัญชีอยู่แล้ว? '}
+                                <button 
+                                    onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+                                    className="text-blue-400 hover:underline"
+                                >
+                                    {mode === 'login' ? 'สมัครสมาชิก' : 'เข้าสู่ระบบ'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App ---
+        function App() {
+          const [models, setModels] = useState([]);
+          const [selectedId, setSelectedId] = useState(null);
+          const [modelStats, setModelStats] = useState({}); 
+          const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+          const [isCalculated, setIsCalculated] = useState(false);
+          
+          // Auth State
+          const [user, setUser] = useState(null); // null = not logged in
+          const [showAuthModal, setShowAuthModal] = useState(false);
+
+          const defaultSettings = {
+            scale: { x: 1, y: 1, z: 1 },
+            uniformScale: true,
+            material: 'PLA',
+            colorId: 'white',
+            customColor: '',
+            infill: 20,
+            layerHeight: 0.20,
+            supportEnabled: true,
+            supportDensity: 15,
+          };
+
+          const handleUploadClick = () => {
+              if (!user) {
+                  setShowAuthModal(true);
+              } else {
+                  document.getElementById('file-upload-input').click();
+              }
+          };
+
+          const handleFileUpload = (e) => {
+            if (!user) return; // Guard logic
+            const files = Array.from(e.target.files);
+            files.forEach(file => {
+              const extension = file.name.split('.').pop().toLowerCase();
+              if (extension !== 'stl' && extension !== 'obj') {
+                alert("รองรับเฉพาะไฟล์ .stl และ .obj เท่านั้น");
+                return;
+              }
+              const url = URL.createObjectURL(file);
+              const newModel = {
+                id: Date.now() + Math.random(),
+                name: file.name,
+                file: file,
+                url: url,
+                type: extension,
+                thumbnail: null, 
+                isSelected: true,
+                settings: { ...defaultSettings }
+              };
+              setModels(prev => [...prev, newModel]);
+              if (!selectedId) setSelectedId(newModel.id);
+              setIsCalculated(false);
+            });
+            // Reset input to allow re-uploading same file if needed
+            e.target.value = null;
+          };
+
+          const handleLogin = (userData) => {
+              setUser(userData);
+              setShowAuthModal(false);
+          };
+
+          const handleLogout = () => {
+              if(confirm('คุณต้องการออกจากระบบใช่หรือไม่?')) {
+                  setUser(null);
+                  setModels([]); // Optional: Clear models on logout
+                  setSelectedId(null);
+              }
+          };
+
+          // --- Rest of logic (removeModel, updateSettings, etc.) ---
+          // Copied logic to keep it working
+          const removeModel = (id, e) => {
+            e.stopPropagation();
+            setModels(prev => prev.filter(m => m.id !== id));
+            const newStats = { ...modelStats };
+            delete newStats[id];
+            setModelStats(newStats);
+            if (selectedId === id) setSelectedId(null);
+          };
+          const updateModelSettings = (id, newSettings) => {
+              setModels(prev => prev.map(m => m.id === id ? { ...m, settings: newSettings } : m));
+              setIsCalculated(false);
+          };
+          const toggleSelection = (id) => {
+              setModels(prev => prev.map(m => m.id === id ? { ...m, isSelected: !m.isSelected } : m));
+          };
+          const toggleSelectAll = () => {
+              const allSelected = models.every(m => m.isSelected);
+              setModels(prev => prev.map(m => ({ ...m, isSelected: !allSelected })));
+          };
+          const handleThumbnailCaptured = (id, dataUrl) => {
+              setModels(prev => prev.map(m => {
+                  if (m.id === id && !m.thumbnail) { return { ...m, thumbnail: dataUrl }; }
+                  return m;
+              }));
+          };
+          const handleDimensionChange = (id, axis, newValue) => {
+              const model = models.find(m => m.id === id);
+              const stats = modelStats[id];
+              if (!model || !stats) return;
+              const originalSize = stats.originalSize[axis];
+              if (originalSize === 0) return;
+              const newScale = newValue / originalSize;
+              const settings = { ...model.settings };
+              if (settings.uniformScale) {
+                  settings.scale = { x: newScale, y: newScale, z: newScale };
+              } else {
+                  settings.scale = { ...settings.scale, [axis]: newScale };
+              }
+              updateModelSettings(id, settings);
+          };
+          const handleScaleChange = (id, axis, newScale) => {
+              const model = models.find(m => m.id === id);
+              if (!model) return;
+              const settings = { ...model.settings };
+              if (settings.uniformScale) {
+                  settings.scale = { x: newScale, y: newScale, z: newScale };
+              } else {
+                  settings.scale = { ...settings.scale, [axis]: newScale };
+              }
+              updateModelSettings(id, settings);
+          };
+          const toggleUniform = (id) => {
+              const model = models.find(m => m.id === id);
+              if (!model) return;
+              updateModelSettings(id, { ...model.settings, uniformScale: !model.settings.uniformScale });
+          };
+          const handleAnalyzed = (id, data) => {
+             setModelStats(prev => ({ ...prev, [id]: data }));
+          };
+
+          // Calculation
+          const calculateItem = (model) => {
+            if (!model) return { weight: 0, time: 0, price: 0, dimensions: {x:0,y:0,z:0}, colorHex: '#FFFFFF', isOversized: false };
+            const stats = modelStats[model.id] || { volume: 0, originalSize: {x:0,y:0,z:0} };
+            const dimensions = {
+                x: stats.originalSize.x * model.settings.scale.x,
+                y: stats.originalSize.y * model.settings.scale.y,
+                z: stats.originalSize.z * model.settings.scale.z
+            };
+            const isOversized = dimensions.x > MAX_BUILD_VOLUME || dimensions.y > MAX_BUILD_VOLUME || dimensions.z > MAX_BUILD_VOLUME;
+            const rawVol = stats.volume;
+            const scaleFactor = model.settings.scale.x * model.settings.scale.y * model.settings.scale.z;
+            const finalVol = rawVol * scaleFactor;
+            const density = MATERIALS[model.settings.material].density;
+            const shellRatio = 0.35; 
+            const infillRatio = model.settings.infill / 100;
+            const solidWeight = finalVol * density * (shellRatio + ((1 - shellRatio) * infillRatio));
+            const totalWeight = model.settings.supportEnabled ? solidWeight * (1 + model.settings.supportDensity / 100) : solidWeight;
+            const layerHeightConfig = LAYER_HEIGHTS.find(l => Math.abs(l.value - model.settings.layerHeight) < 0.001);
+            const timeFactor = layerHeightConfig ? layerHeightConfig.timeFactor : 1.0;
+            const baseTimePerGram = 0.08; 
+            const printTimeHours = totalWeight * baseTimePerGram * timeFactor * 1.22;
+            const netPrice = (totalWeight * MATERIAL_COST_PER_GRAM) + FIXED_COST_SETUP + FIXED_COST_POST + (printTimeHours * HOURLY_RATE);
+            const selectedColorObj = COLORS.find(c => c.id === model.settings.colorId) || COLORS[0];
+            const colorHex = selectedColorObj.hex;
+            return {
+                weight: totalWeight, time: printTimeHours, price: netPrice, dimensions, isOversized, colorHex,
+                colorName: model.settings.colorId === 'other' ? `อื่นๆ: ${model.settings.customColor}` : selectedColorObj.name
+            };
+          };
+
+          const currentModel = models.find(m => m.id === selectedId);
+          const currentStats = calculateItem(currentModel);
+          const hasOversizedSelected = models.some(model => model.isSelected && calculateItem(model).isOversized);
+          const selectedCount = models.filter(m => m.isSelected).length;
+          const getTotalStats = () => {
+             return models.reduce((acc, model) => {
+                if (!model.isSelected) return acc;
+                const stats = calculateItem(model);
+                return {
+                    weight: acc.weight + stats.weight,
+                    time: acc.time + stats.time,
+                    price: acc.price + stats.price
+                };
+             }, { weight: 0, time: 0, price: 0 });
+          };
+          const totalStats = getTotalStats();
+
+          return (
+            <div className="flex h-screen w-full bg-[#121212] text-gray-200 font-sans overflow-hidden">
+              
+              {/* --- Left Sidebar --- */}
+              <div className="w-80 flex-shrink-0 bg-[#1e1e1e] border-r border-gray-800 flex flex-col z-10 shadow-xl">
+                <div className="p-4 border-b border-gray-800 bg-[#1e1e1e] flex flex-col gap-3">
+                   <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                            <img 
+                                src="https://scontent.fbkk13-1.fna.fbcdn.net/v/t39.30808-6/546515014_717883601259109_79815490622598568_n.jpg?_nc_cat=105&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=pL8BGfZyEGoQ7kNvwFOSr8R&_nc_oc=AdkbmydhO9rOUu085kyhLJUUxHe3zhkmLO1Qt38kO6Z98Hf_fxn_FDgS72HGZlObzks1etwq6BPsFTaMCDnMDr3B&_nc_zt=23&_nc_ht=scontent.fbkk13-1.fna&_nc_gid=8l7LdD8-fh_sHZJpJ7erKw&oh=00_Afm91Hn4GxGbxlNvV_bFj226Lis6Bn-U96D0EyXcgW0MKQ&oe=6940AE4A" 
+                                alt="FOCOLAB" 
+                                className="w-full h-full object-contain"
+                                onError={(e) => { e.target.onerror = null; e.target.src = "https://cdn-icons-png.flaticon.com/512/2967/2967262.png"; }}
+                            />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold text-white tracking-tight leading-none">FOCOLAB</h1>
+                            <p className="text-[10px] text-gray-400">3D Printing Service</p>
+                        </div>
+                   </div>
+                   
+                   {/* User Status Bar */}
+                   {user ? (
+                       <div className="flex items-center justify-between bg-blue-900/20 border border-blue-500/30 p-2 rounded-lg">
+                           <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center text-xs font-bold text-white">
+                                    {user.name.charAt(0).toUpperCase()}
+                                </div>
+                                <span className="text-xs font-medium text-blue-200 truncate max-w-[100px]">{user.name}</span>
+                           </div>
+                           <button onClick={handleLogout} title="Logout" className="text-gray-400 hover:text-white">
+                               <LogOut size={14} />
+                           </button>
+                       </div>
+                   ) : (
+                       <button 
+                            onClick={() => setShowAuthModal(true)}
+                            className="flex items-center justify-center gap-2 w-full py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-lg text-xs transition-colors text-gray-300"
+                       >
+                           <LogIn size={14} /> เข้าสู่ระบบเพื่อเริ่มใช้งาน
+                       </button>
+                   )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  <div className="flex items-center justify-between pb-2">
+                      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">รายการงานพิมพ์</h2>
+                      {models.length > 0 && (
+                        <button 
+                            onClick={toggleSelectAll} 
+                            className="text-[10px] text-gray-400 flex items-center gap-1 hover:text-white"
+                        >
+                            {models.every(m => m.isSelected) ? <CheckSquare size={12} /> : <Square size={12} />}
+                            เลือกทั้งหมด
+                        </button>
+                      )}
+                  </div>
+                  
+                  {models.map(model => {
+                    const stats = calculateItem(model);
+                    return (
+                        <div 
+                          key={model.id}
+                          onClick={() => setSelectedId(model.id)}
+                          className={`group relative p-2 pl-3 rounded-lg cursor-pointer border transition-all ${
+                            selectedId === model.id 
+                              ? 'bg-gray-800 border-blue-500 shadow-md' 
+                              : 'bg-[#252525] border-transparent hover:bg-gray-800'
+                          } ${stats.isOversized ? 'border-red-500/50 bg-red-900/10' : ''}`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="pt-4" onClick={(e) => e.stopPropagation()}>
+                                <input type="checkbox" checked={model.isSelected} onChange={() => toggleSelection(model.id)} className="w-4 h-4 accent-blue-500 rounded cursor-pointer"/>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-3 overflow-hidden mb-2">
+                                    <div className="w-14 h-14 rounded-lg bg-gray-900 border border-gray-700 flex items-center justify-center overflow-hidden flex-shrink-0 relative">
+                                        {model.thumbnail ? (
+                                            <img src={model.thumbnail} alt="Thumbnail" className="w-full h-full object-cover" />
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center text-gray-500"><ImageIcon size={16} /><span className="text-[9px] mt-1">{model.type.toUpperCase()}</span></div>
+                                        )}
+                                        {stats.isOversized && (<div className="absolute inset-0 bg-black/60 flex items-center justify-center"><AlertTriangle size={20} className="text-red-500" /></div>)}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-white truncate">{model.name}</p>
+                                        <p className="text-xs text-gray-500 truncate">{model.settings.material} • {stats.colorName}</p>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-center text-xs border-t border-gray-700/50 pt-2">
+                                    <span className="text-gray-400 flex items-center gap-1">{isCalculated && !stats.isOversized ? <><Clock size={10} /> {formatTime(stats.time)}</> : '-'}</span>
+                                    {stats.isOversized ? (<span className="text-red-400 font-bold flex items-center gap-1"><AlertTriangle size={10} /> ขนาดเกิน</span>) : (<span className={`text-sm font-bold ${isCalculated ? 'text-blue-400' : 'text-gray-600'}`}>{isCalculated ? `฿${Math.ceil(stats.price)}` : 'รอประเมิน'}</span>)}
+                                </div>
+                            </div>
+                            <button onClick={(e) => removeModel(model.id, e)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 hover:text-red-500 rounded transition-all"><Trash2 size={14} /></button>
+                          </div>
+                        </div>
+                    );
+                  })}
+
+                  {models.length === 0 && (
+                    <div className="text-center py-10 opacity-50 border-2 border-dashed border-gray-700 rounded-lg">
+                      <Layers size={32} className="mx-auto mb-2" />
+                      <p className="text-sm">ยังไม่มีไฟล์งาน</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 border-t border-gray-800 bg-[#1e1e1e]">
+                   <button 
+                        onClick={handleUploadClick}
+                        className={`flex items-center justify-center w-full gap-2 p-3 rounded-lg transition-colors border border-dashed ${
+                            user 
+                            ? 'bg-gray-800 hover:bg-gray-700 text-white border-gray-600 cursor-pointer' 
+                            : 'bg-gray-900 text-gray-500 border-gray-800 cursor-not-allowed'
+                        }`}
+                   >
+                      {user ? <Upload size={18} /> : <Lock size={18} />}
+                      <span>{user ? 'เพิ่มไฟล์งาน (STL/OBJ)' : 'เข้าสู่ระบบเพื่ออัปโหลด'}</span>
+                   </button>
+                   <input id="file-upload-input" type="file" accept=".stl,.obj" multiple onChange={handleFileUpload} className="hidden" />
+                </div>
+              </div>
+
+              {/* --- Center & Right Sidebar (Same as before) --- */}
+              {/* ... (Code for 3D Viewer and Right Sidebar remains same logic, just rendering based on state) ... */}
+              
+              <div className="flex-1 relative bg-[#0f0f0f] overflow-hidden">
+                {currentModel ? (
+                  <Canvas shadows camera={{ position: [0, 0, 150], fov: 50 }} gl={{ preserveDrawingBuffer: true }}>
+                    <Suspense fallback={<LoaderFallback />}>
+                      <Stage environment="city" intensity={0.5} contactShadow={{ opacity: 0.7, blur: 2 }}>
+                        <ModelViewer 
+                          fileUrl={currentModel.url} 
+                          fileType={currentModel.type} 
+                          scale={currentModel.settings.scale}
+                          colorHex={currentStats.colorHex}
+                          onModelLoaded={() => {}}
+                        />
+                        <ModelAnalyzer fileUrl={currentModel.url} fileType={currentModel.type} id={currentModel.id} onAnalyzed={handleAnalyzed} />
+                        <ScreenshotTaker onCaptured={(dataUrl) => handleThumbnailCaptured(currentModel.id, dataUrl)} />
+                      </Stage>
+                      <OrbitControls makeDefault />
+                    </Suspense>
+                  </Canvas>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-600 select-none">
+                    <div className="opacity-10 mb-4"><img src="https://cdn-icons-png.flaticon.com/512/2967/2967262.png" alt="Logo" className="w-24 h-24 grayscale" /></div>
+                    <p>เลือกงานจากรายการ หรืออัปโหลดใหม่</p>
+                  </div>
+                )}
+                {currentModel && currentStats.isOversized && (
+                    <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600/90 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-bounce">
+                        <AlertTriangle size={20} /><span>ขนาดชิ้นงานเกิน {MAX_BUILD_VOLUME}mm กรุณาปรับลดขนาด</span>
+                    </div>
+                )}
+              </div>
+
+              {currentModel ? (
+                <div className="w-80 flex-shrink-0 bg-[#1e1e1e] border-l border-gray-800 flex flex-col overflow-y-auto z-10 shadow-xl">
+                  <div className="p-4 border-b border-gray-800 bg-[#1e1e1e]">
+                     <h2 className="text-lg font-semibold text-white">ตั้งค่าการพิมพ์</h2>
+                     <p className="text-xs text-gray-400 truncate w-full">{currentModel.name}</p>
+                  </div>
+                  <div className="p-4 space-y-6">
+                    <div className={`bg-[#252525] p-3 rounded-lg border ${currentStats.isOversized ? 'border-red-500' : 'border-gray-700'}`}>
+                      <div className="flex items-center justify-between mb-3">
+                        <label className={`text-sm font-medium flex items-center gap-2 ${currentStats.isOversized ? 'text-red-400' : 'text-gray-300'}`}><Ruler size={14} /> ขนาดชิ้นงาน (mm)</label>
+                        <button onClick={() => toggleUniform(currentModel.id)} className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded transition-colors ${currentModel.settings.uniformScale ? 'bg-blue-500/20 text-blue-400 border border-blue-500/50' : 'bg-gray-700 text-gray-400 border border-transparent'}`}>{currentModel.settings.uniformScale ? <Lock size={10} /> : <Unlock size={10} />} Uniform</button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mb-3">
+                         {['x', 'y', 'z'].map(axis => (
+                            <div key={axis}>
+                                <label className="text-[10px] text-center block text-gray-500 uppercase mb-1">{axis}</label>
+                                <SmartInput value={currentStats.dimensions[axis]} onChange={(val) => handleDimensionChange(currentModel.id, axis, val)} step="0.1" className={`w-full bg-gray-800 border rounded px-2 py-1 text-xs text-center text-white focus:outline-none ${currentStats.dimensions[axis] > MAX_BUILD_VOLUME ? 'border-red-500 text-red-100 bg-red-900/20' : 'border-gray-600 focus:border-blue-500'}`} />
+                            </div>
+                         ))}
+                      </div>
+                      {currentStats.isOversized && (<div className="text-[10px] text-red-400 text-center mb-3 flex items-center justify-center gap-1"><AlertTriangle size={10} /> ขนาดต้องไม่เกิน {MAX_BUILD_VOLUME}mm</div>)}
+                      <div className="flex items-center justify-between mb-2"><label className="text-[10px] text-gray-500">Scale (%)</label></div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {['x', 'y', 'z'].map(axis => (<div key={`scale-${axis}`}><SmartInput value={currentModel.settings.scale[axis] * 100} onChange={(val) => handleScaleChange(currentModel.id, axis, val / 100)} step="1" className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-center text-gray-400 focus:border-blue-500 outline-none" /></div>))}
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-sm font-medium text-gray-300 mb-2 block">วัสดุ (Material)</label>
+                            <div className="grid grid-cols-2 gap-2">{Object.keys(MATERIALS).map(mat => (<button key={mat} onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, material: mat })} className={`text-xs py-2 rounded border transition-all ${currentModel.settings.material === mat ? 'border-blue-500 bg-blue-500/10 text-blue-500 font-bold' : 'border-gray-600 bg-gray-800 text-gray-400 hover:border-gray-500'}`}>{mat}</button>))}</div>
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium text-gray-300 mb-2 block flex items-center gap-2"><Palette size={14} /> เลือกสี (Color)</label>
+                            <div className="space-y-2">
+                                <div className="flex flex-wrap gap-2">{COLORS.map(color => (<button key={color.id} onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, colorId: color.id })} className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all ${currentModel.settings.colorId === color.id ? 'border-blue-500 scale-110 shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'border-gray-600 hover:border-gray-400'}`} title={color.name} style={{ backgroundColor: color.hex }}>{currentModel.settings.colorId === color.id && <CheckCircle size={14} className={color.id === 'white' ? "text-black drop-shadow-md" : "text-white drop-shadow-md"} />}</button>))}</div>
+                                {currentModel.settings.colorId === 'other' && (<div className="animate-fadeIn"><input type="text" placeholder="ระบุสีที่ต้องการ..." value={currentModel.settings.customColor} onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, customColor: e.target.value })} className="w-full bg-gray-800 border border-blue-500/50 rounded px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500" /></div>)}
+                                <p className="text-xs text-gray-500 mt-1">สีที่เลือก: <span className="text-gray-300">{currentStats.colorName}</span></p>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium text-gray-300 mb-2 block">ความละเอียด (Layer Height)</label>
+                            <select value={currentModel.settings.layerHeight} onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, layerHeight: parseFloat(e.target.value) })} className="w-full bg-gray-800 text-white text-sm border border-gray-600 rounded p-2 focus:border-blue-500 outline-none">{LAYER_HEIGHTS.map(h => (<option key={h.value} value={h.value}>{h.label}</option>))}</select>
+                        </div>
+                    </div>
+                    <div className="bg-[#252525] p-3 rounded-lg border border-gray-700 space-y-4">
+                       <div><div className="flex justify-between text-sm mb-1"><span className="text-gray-300">Infill (ความหนาแน่น)</span><span className="text-blue-400">{currentModel.settings.infill}%</span></div><input type="range" min="10" max="100" step="5" value={currentModel.settings.infill} onChange={(e) => updateModelSettings(currentModel.id, { ...currentModel.settings, infill: parseInt(e.target.value) })} className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500" /></div>
+                       <div className="flex items-center justify-between"><span className="text-sm text-gray-300">ใช้ Support/Raft?</span><button onClick={() => updateModelSettings(currentModel.id, { ...currentModel.settings, supportEnabled: !currentModel.settings.supportEnabled })} className={`w-10 h-5 rounded-full relative transition-colors ${currentModel.settings.supportEnabled ? 'bg-blue-500' : 'bg-gray-600'}`}><div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-all ${currentModel.settings.supportEnabled ? 'left-6' : 'left-1'}`} /></button></div>
+                    </div>
+                    {!currentStats.isOversized && (<div className="text-xs text-gray-500 bg-[#252525] p-3 rounded border border-gray-700 space-y-1"><div className="flex justify-between"><span>น้ำหนัก:</span><span>{isCalculated ? `${currentStats.weight.toFixed(1)} g` : '-'}</span></div><div className="flex justify-between"><span>เวลาพิมพ์โดยประมาณ:</span><span>{isCalculated ? formatTime(currentStats.time) : '-'}</span></div></div>)}
+                  </div>
+                  <div className="mt-auto bg-[#1a1a1a] p-4 border-t border-gray-800 sticky bottom-0">
+                     <div className="flex justify-between items-end mb-4"><div className="text-gray-400 text-xs"><p>รวมค่าบริการพื้นฐานแล้ว</p></div><div className="text-right"><p className="text-xs text-gray-500 mb-1">ราคาต่อชิ้น</p><p className={`text-3xl font-bold ${currentStats.isOversized ? 'text-red-500' : 'text-white'}`}>{currentStats.isOversized ? 'เกินขนาด' : (isCalculated ? `฿${Math.ceil(currentStats.price)}` : '---')}</p></div></div>
+                     <button onClick={() => { if(!hasOversizedSelected && selectedCount > 0) { setIsCalculated(true); setIsCheckoutOpen(true); } }} disabled={hasOversizedSelected || selectedCount === 0} className={`w-full py-3 font-bold rounded-lg shadow-lg transition-all flex items-center justify-center gap-2 ${hasOversizedSelected || selectedCount === 0 ? 'bg-gray-600 cursor-not-allowed opacity-50' : (isCalculated ? 'bg-green-600 hover:bg-green-700 text-white shadow-green-900/20 active:scale-95' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-900/20 active:scale-95')}`}>{hasOversizedSelected ? <AlertTriangle size={18} /> : <Calculator size={18} />}{hasOversizedSelected ? 'งานที่เลือกเกินขนาด' : (selectedCount === 0 ? 'กรุณาเลือกงาน' : (isCalculated ? `สั่งพิมพ์ (${selectedCount})` : 'ประเมินราคา'))}</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-80 bg-[#1e1e1e] border-l border-gray-800 flex flex-col items-center justify-center text-gray-500 p-6 text-center z-10"><Settings size={48} className="mb-4 opacity-20" /><p className="text-sm">เลือกงานเพื่อตั้งค่า</p></div>
+              )}
+
+              {/* --- Auth Modal --- */}
+              {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} onLogin={handleLogin} />}
+
+              {/* --- Checkout Modal --- */}
+              {isCheckoutOpen && !hasOversizedSelected && selectedCount > 0 && (
+                  <div className="absolute inset-0 z-50 flex items-center justify-center modal-overlay p-4">
+                      <div className="bg-[#1e1e1e] w-full max-w-md rounded-xl border border-gray-700 shadow-2xl overflow-hidden animate-fadeIn">
+                          <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800"><h3 className="text-lg font-bold text-white flex items-center gap-2"><CheckCircle size={20} className="text-green-500"/> สรุปรายการสั่งพิมพ์</h3><button onClick={() => setIsCheckoutOpen(false)} className="text-gray-400 hover:text-white"><X size={20} /></button></div>
+                          <div className="p-6 space-y-4">
+                              <div className="bg-[#252525] rounded-lg p-4 space-y-2"><div className="flex justify-between text-gray-300"><span>จำนวนไฟล์ที่เลือก:</span><span className="font-bold">{selectedCount} รายการ</span></div><div className="flex justify-between text-gray-300"><span>น้ำหนักรวม:</span><span className="font-bold">{totalStats.weight.toFixed(1)} กรัม</span></div><div className="flex justify-between text-gray-300"><span>เวลาพิมพ์รวมโดยประมาณ:</span><span className="font-bold">{formatTime(totalStats.time)}</span></div></div>
+                              <div className="flex justify-between items-center pt-2"><span className="text-gray-400">ราคาสุทธิ</span><span className="text-4xl font-bold text-blue-500">฿{Math.ceil(totalStats.price)}</span></div>
+                              <p className="text-xs text-gray-500 text-center">*ราคานี้รวมค่าวัสดุ ค่าเวลาเครื่อง และค่าบริการพื้นฐานแล้ว</p>
+                              <button onClick={() => alert('ดำเนินการสั่งซื้อเรียบร้อย! (Mockup)')} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-colors">Check Out / ชำระเงิน</button>
+                          </div>
+                      </div>
+                  </div>
+              )}
+            </div>
+          );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
